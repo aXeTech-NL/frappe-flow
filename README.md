@@ -29,6 +29,23 @@ Flow sets up the RAG pipeline, embeds and indexes the files, and keeps the DocTy
 
 ---
 
+## Compatibility
+
+| Branch | Release | Frappe Framework |
+|---|---|---|
+| `version-16` | `v16.x.x` | Frappe 16 |
+| `develop` | unreleased | tracks upstream development |
+
+## Installation
+
+### Frappe 16
+
+```bash
+bench get-app \
+  --branch version-16 \
+  https://github.com/axetech/frappe_flow.git
+```
+
 ## Quick Access
 
 You can open the global AI chat interface from anywhere in the Frappe Desk by pressing:

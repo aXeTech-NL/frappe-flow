@@ -189,13 +189,58 @@ class TestPageRelationships(IntegrationTestCase):
 
 		with (
 			patch.object(page_context, "get_references_across_doctypes", return_value=references),
-			patch.object(page_context.frappe, "get_meta", return_value=meta),
-			patch.object(page_context.frappe, "has_permission", return_value=True),
-			patch.object(page_context, "_permitted_fieldnames", return_value={"owner_user"}),
+			patch.object(page_context.frappe, "get_meta", return_value=meta) as get_meta,
+			patch.object(page_context.frappe, "has_permission", return_value=True) as has_permission,
+			patch.object(
+				page_context, "_permitted_fieldnames", return_value={"owner_user"}
+			) as permitted_fields,
 		):
 			result = page_context._get_inbound_links("User")
 
 		self.assertEqual(result, [{"doctype": "Project", "match_field": "owner_user"}])
+		self.assertEqual(get_meta.call_count, 1)
+		self.assertEqual(has_permission.call_count, 1)
+		self.assertEqual(permitted_fields.call_count, 1)
+
+
+class TestContextBounding(IntegrationTestCase):
+	def test_oversized_document_keeps_structured_contents_for_resume(self):
+		context = page_context._finalize_context(
+			{
+				"type": "document",
+				"doctype": "ToDo",
+				"name": "TODO-1",
+				"contents": {"name": "TODO-1", "description": "x" * 100_000},
+				"relationships": [],
+			}
+		)
+
+		self.assertIsInstance(context["contents"], dict)
+		self.assertEqual(context["contents"]["name"], "TODO-1")
+		self.assertLessEqual(len(page_context._json_compact(context)), 50_000)
+		with patch.object(page_context, "_build_document_context", return_value=context) as builder:
+			page_context.revalidate_page_context(context)
+		self.assertIsInstance(builder.call_args.args[0]["values"], dict)
+		self.assertTrue(builder.call_args.args[0]["values"])
+
+	def test_oversized_list_keeps_structured_rows_for_resume(self):
+		context = page_context._finalize_context(
+			{
+				"type": "list",
+				"doctype": "ToDo",
+				"contents": [{"name": f"TODO-{index}", "description": "x" * 10_000} for index in range(20)],
+				"filters": [],
+				"relationships": [],
+			}
+		)
+
+		self.assertIsInstance(context["contents"], list)
+		self.assertTrue(context["contents"])
+		self.assertLessEqual(len(page_context._json_compact(context)), 50_000)
+		with patch.object(page_context, "_build_list_context", return_value=context) as builder:
+			page_context.revalidate_page_context(context)
+		self.assertTrue(builder.call_args.args[0]["names"])
+		self.assertTrue(builder.call_args.args[0]["fields"])
 
 
 class TestRoutePageContext(IntegrationTestCase):

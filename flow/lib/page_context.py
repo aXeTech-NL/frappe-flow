@@ -420,24 +420,33 @@ def _get_inbound_links(doctype: str) -> list[dict[str, str]]:
 	are intentionally omitted because they cannot be matched safely using one field alone.
 	"""
 	references = get_references_across_doctypes(to_doctypes=[doctype])
-	result: list[dict[str, str]] = []
-	seen: set[tuple[str, str]] = set()
-
+	direct_links: list[tuple[str, str]] = []
 	for reference in references.get(doctype, []):
 		if reference.get("doctype_fieldname") or reference.get("is_child"):
 			continue
 		source_doctype = reference.get("doctype")
 		match_field = reference.get("fieldname")
-		if not source_doctype or not match_field:
-			continue
+		if source_doctype and match_field:
+			direct_links.append((source_doctype, match_field))
 
+	# A source DocType can contain several links to the target. Resolve its metadata,
+	# permission, and permitted fields once instead of repeating those checks per field.
+	source_info: dict[str, tuple[Any, set[str]]] = {}
+	for source_doctype in dict.fromkeys(source for source, _field in direct_links):
 		meta = frappe.get_meta(source_doctype)
 		if meta.istable or not frappe.has_permission(source_doctype, "read"):
 			continue
-		df = meta.get_field(match_field)
-		if not df or df.fieldtype != "Link" or df.options != doctype:
+		source_info[source_doctype] = (meta, _permitted_fieldnames(meta))
+
+	result: list[dict[str, str]] = []
+	seen: set[tuple[str, str]] = set()
+	for source_doctype, match_field in direct_links:
+		info = source_info.get(source_doctype)
+		if not info:
 			continue
-		if match_field not in _permitted_fieldnames(meta):
+		meta, permitted = info
+		df = meta.get_field(match_field)
+		if not df or df.fieldtype != "Link" or df.options != doctype or match_field not in permitted:
 			continue
 
 		key = (source_doctype, match_field)
@@ -510,42 +519,94 @@ def _append_relationships(lines: list[str], context: dict[str, Any]) -> None:
 def _format_contents(context: dict[str, Any]) -> str:
 	contents = context.get("contents")
 	formatted = contents if isinstance(contents, str) else _json_dump(contents)
-	if context.get("contents_truncated"):
-		formatted += "\n[Page contents truncated to fit the context limit.]"
+	if context.get("contents_truncated") or context.get("context_truncated"):
+		formatted += "\n[Page context truncated to fit the context limit.]"
 	return formatted
 
 
 def _bound_contents(contents: Any) -> tuple[Any, bool]:
-	serialized = _json_dump(contents)
+	serialized = _json_compact(contents)
 	if len(serialized) <= PAGE_CONTEXT_MAX_CONTENT_CHARS:
 		return contents, False
-	return serialized[:PAGE_CONTEXT_MAX_CONTENT_CHARS], True
+	return _truncate_json_value(contents, PAGE_CONTEXT_MAX_CONTENT_CHARS), True
 
 
 def _finalize_context(context: dict[str, Any]) -> dict[str, Any]:
-	"""Enforce one storage/prompt cap over contents, filters, routes, and relations together."""
-	serialized = _json_compact(context)
-	if len(serialized) <= PAGE_CONTEXT_MAX_CONTENT_CHARS:
+	"""Enforce one cap while preserving structured document/list contents for resume."""
+	if len(_json_compact(context)) <= PAGE_CONTEXT_MAX_CONTENT_CHARS:
 		return context
 
-	bounded = {
-		key: context[key]
-		for key in ("type", "doctype", "name", "route", "is_new", "is_dirty")
-		if key in context
-	}
-	bounded["contents_truncated"] = True
-	bounded["contents"] = ""
+	bounded = dict(context)
+	bounded["context_truncated"] = True
 
-	low, high = 0, min(len(serialized), PAGE_CONTEXT_MAX_CONTENT_CHARS)
-	while low <= high:
-		mid = (low + high) // 2
-		bounded["contents"] = serialized[:mid]
-		if len(_json_compact(bounded)) <= PAGE_CONTEXT_MAX_CONTENT_CHARS:
-			low = mid + 1
-		else:
-			high = mid - 1
-	bounded["contents"] = serialized[:high]
+	# Relationship and filter metadata are useful but secondary to the actual page rows/fields.
+	# Trim them first so resume can still revalidate structured contents.
+	for key in ("relationships", "filters"):
+		items = bounded.get(key)
+		while (
+			isinstance(items, list) and items and len(_json_compact(bounded)) > PAGE_CONTEXT_MAX_CONTENT_CHARS
+		):
+			items.pop()
+
+	if len(_json_compact(bounded)) <= PAGE_CONTEXT_MAX_CONTENT_CHARS:
+		return bounded
+
+	contents = bounded.get("contents")
+	placeholder: Any = {} if isinstance(contents, dict) else [] if isinstance(contents, list) else ""
+	bounded["contents"] = placeholder
+	bounded["contents_truncated"] = True
+	overhead = len(_json_compact(bounded)) - len(_json_compact(placeholder))
+	available = max(2, PAGE_CONTEXT_MAX_CONTENT_CHARS - overhead)
+	bounded["contents"] = _truncate_json_value(contents, available)
 	return bounded
+
+
+def _truncate_json_value(value: Any, limit: int) -> Any:
+	"""Greedily fit a JSON value under `limit` chars without changing dict/list roots."""
+	if limit < 2:
+		return {} if isinstance(value, dict) else [] if isinstance(value, list) else ""
+	if len(_json_compact(value)) <= limit:
+		return value
+	if isinstance(value, str):
+		low, high = 0, len(value)
+		while low <= high:
+			mid = (low + high) // 2
+			if len(_json_compact(value[:mid])) <= limit:
+				low = mid + 1
+			else:
+				high = mid - 1
+		return value[:high]
+	if isinstance(value, dict):
+		result = {}
+		for key, item in value.items():
+			placeholder = {**result, key: None}
+			available = limit - (len(_json_compact(placeholder)) - len(_json_compact(None)))
+			if available <= 0:
+				break
+			bounded_item = _truncate_json_value(item, available)
+			candidate = {**result, key: bounded_item}
+			if len(_json_compact(candidate)) > limit:
+				break
+			result[key] = bounded_item
+			if len(_json_compact(item)) > available:
+				break
+		return result
+	if isinstance(value, list):
+		result = []
+		for item in value:
+			placeholder = [*result, None]
+			available = limit - (len(_json_compact(placeholder)) - len(_json_compact(None)))
+			if available <= 0:
+				break
+			bounded_item = _truncate_json_value(item, available)
+			candidate = [*result, bounded_item]
+			if len(_json_compact(candidate)) > limit:
+				break
+			result.append(bounded_item)
+			if len(_json_compact(item)) > available:
+				break
+		return result
+	return _truncate_json_value(str(value), limit)
 
 
 def _bounded_filter_value(value: Any) -> Any:

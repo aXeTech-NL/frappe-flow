@@ -5,7 +5,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.desk.form.linked_with import get_references_across_doctypes
+from frappe.desk.form.linked_with import get_references_across_doctypes_by_link_field
 
 PAGE_CONTEXT_LIST_LIMIT = 20
 PAGE_CONTEXT_RELATION_LIMIT = 50
@@ -419,7 +419,7 @@ def _get_inbound_links(doctype: str) -> list[dict[str, str]]:
 	Dynamic links and child-table paths require additional discriminator/path metadata and
 	are intentionally omitted because they cannot be matched safely using one field alone.
 	"""
-	references = get_references_across_doctypes(to_doctypes=[doctype])
+	references = get_references_across_doctypes_by_link_field(to_doctypes=[doctype])
 	direct_links: list[tuple[str, str]] = []
 	for reference in references.get(doctype, []):
 		if reference.get("doctype_fieldname") or reference.get("is_child"):

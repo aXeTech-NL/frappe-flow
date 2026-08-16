@@ -167,7 +167,7 @@ class TestListPageContext(IntegrationTestCase):
 
 
 class TestPageRelationships(IntegrationTestCase):
-	def test_returns_only_direct_source_doctype_and_match_field(self):
+	def test_uses_only_link_fields_for_direct_inbound_relations(self):
 		references = {
 			"User": [
 				{"doctype": "Project", "fieldname": "owner_user"},
@@ -188,7 +188,15 @@ class TestPageRelationships(IntegrationTestCase):
 		)
 
 		with (
-			patch.object(page_context, "get_references_across_doctypes", return_value=references),
+			patch.object(
+				page_context,
+				"get_references_across_doctypes_by_link_field",
+				return_value=references,
+			) as link_references,
+			patch(
+				"frappe.desk.form.linked_with.get_references_across_doctypes",
+				side_effect=TypeError("'NoneType' object is not iterable"),
+			) as broad_references,
 			patch.object(page_context.frappe, "get_meta", return_value=meta) as get_meta,
 			patch.object(page_context.frappe, "has_permission", return_value=True) as has_permission,
 			patch.object(
@@ -198,6 +206,8 @@ class TestPageRelationships(IntegrationTestCase):
 			result = page_context._get_inbound_links("User")
 
 		self.assertEqual(result, [{"doctype": "Project", "match_field": "owner_user"}])
+		link_references.assert_called_once_with(to_doctypes=["User"])
+		broad_references.assert_not_called()
 		self.assertEqual(get_meta.call_count, 1)
 		self.assertEqual(has_permission.call_count, 1)
 		self.assertEqual(permitted_fields.call_count, 1)

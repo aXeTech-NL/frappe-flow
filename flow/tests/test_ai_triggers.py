@@ -174,22 +174,49 @@ class TestDispatch(IntegrationTestCase):
 		self.trigger.condition = f"frappe.session.user == '{service.name}'"
 		self.trigger.save()
 		doc = frappe.get_doc({"doctype": "ToDo", "description": "run-as cond"}).insert()
+		session = frappe.local.session
+		original_state = (session.sid, session.data, frappe.local.form_dict)
+		original_session_data = frappe._dict({"user_type": "System User"})
+		original_form_dict = frappe._dict({"cmd": "frappe.desk.form.save.submit"})
+		try:
+			session.sid = "browser-session-probe"
+			session.data = original_session_data
+			frappe.local.form_dict = original_form_dict
 
-		with patch("frappe.enqueue") as enqueue:
-			dispatch(doc, "after_insert")
+			with patch("frappe.enqueue") as enqueue:
+				dispatch(doc, "after_insert")
 
-		enqueue.assert_called_once()
-		self.assertEqual(frappe.session.user, "Administrator")  # restored afterward
+			enqueue.assert_called_once()
+			self.assertEqual(frappe.session.user, "Administrator")  # restored afterward
+			self.assertEqual(session.sid, "browser-session-probe")
+			self.assertIs(session.data, original_session_data)
+			self.assertIs(frappe.local.form_dict, original_form_dict)
+		finally:
+			session.sid, session.data, frappe.local.form_dict = original_state
 
-	def test_condition_runtime_error_skips_trigger(self):
+	def test_condition_runtime_error_skips_trigger_and_restores_session(self):
 		self.trigger.condition = "doc.status.no_such_method()"
 		self.trigger.save()
 		doc = frappe.get_doc({"doctype": "ToDo", "description": "boom"}).insert()
+		session = frappe.local.session
+		original_state = (session.sid, session.data, frappe.local.form_dict)
+		original_session_data = frappe._dict({"user_type": "System User"})
+		original_form_dict = frappe._dict({"cmd": "frappe.desk.form.save.submit"})
+		try:
+			session.sid = "failed-condition-session-probe"
+			session.data = original_session_data
+			frappe.local.form_dict = original_form_dict
 
-		with patch("frappe.enqueue") as enqueue:
-			dispatch(doc, "after_insert")
+			with patch("frappe.enqueue") as enqueue:
+				dispatch(doc, "after_insert")
 
-		enqueue.assert_not_called()
+			enqueue.assert_not_called()
+			self.assertEqual(frappe.session.user, "Administrator")
+			self.assertEqual(session.sid, "failed-condition-session-probe")
+			self.assertIs(session.data, original_session_data)
+			self.assertIs(frappe.local.form_dict, original_form_dict)
+		finally:
+			session.sid, session.data, frappe.local.form_dict = original_state
 
 	def test_condition_script_without_result_rejected_on_save(self):
 		self.trigger.condition = "status = doc.status"

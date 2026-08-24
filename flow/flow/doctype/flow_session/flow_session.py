@@ -105,7 +105,8 @@ class FlowSession(Document):
 
 	def transcript(self) -> list[dict[str, Any]]:
 		"""Return the conversation history in OpenAI message format."""
-		return [_row_to_message(row) for row in self.messages]
+		tool_call_id_to_name: dict[str, str] = {}
+		return [_row_to_message(row, tool_call_id_to_name) for row in self.messages]
 
 	def append_run_messages(self, new_messages: list[dict[str, Any]], run: str) -> None:
 		"""Append the messages produced by `run` to this session's transcript.
@@ -351,8 +352,9 @@ class FlowSession(Document):
 		budget = self._file_injection_budget()
 
 		messages: list[dict[str, Any]] = []
+		tool_call_id_to_name: dict[str, str] = {}
 		for row in self.messages:
-			message = _row_to_message(row)
+			message = _row_to_message(row, tool_call_id_to_name)
 			if row.role == "user":
 				content = message["content"]
 				attachments = attachments_by_run.get(row.run, [])
@@ -472,13 +474,35 @@ def _route_attachment(text: str | None, threshold: int, embeddings_on: bool) -> 
 	return "Retrieval" if embeddings_on else "Inline"
 
 
-def _row_to_message(row) -> dict[str, Any]:
+def _row_to_message(row, tool_call_id_to_name: dict[str, str] | None = None) -> dict[str, Any]:
 	"""Convert a stored transcript row to an OpenAI-format message dict."""
 	if row.role == "tool":
-		return {"role": "tool", "tool_call_id": row.tool_call_id, "content": row.content or ""}
-	message: dict[str, Any] = {"role": row.role, "content": row.content}
+		message: dict[str, Any] = {
+			"role": "tool",
+			"tool_call_id": row.tool_call_id,
+			"content": row.content or "",
+		}
+		if tool_call_id_to_name is not None:
+			name = tool_call_id_to_name.get(row.tool_call_id)
+			if name:
+				message["name"] = name
+		return message
+
+	message = {"role": row.role, "content": row.content}
 	if row.tool_calls:
-		message["tool_calls"] = json.loads(row.tool_calls)
+		parsed_calls = json.loads(row.tool_calls)
+		message["tool_calls"] = parsed_calls
+		if tool_call_id_to_name is not None and isinstance(parsed_calls, list):
+			for tool_call in parsed_calls:
+				if not isinstance(tool_call, dict):
+					continue
+				function = tool_call.get("function")
+				if not isinstance(function, dict):
+					continue
+				tool_call_id = tool_call.get("id")
+				function_name = function.get("name")
+				if tool_call_id and function_name:
+					tool_call_id_to_name[tool_call_id] = function_name
 	return message
 
 

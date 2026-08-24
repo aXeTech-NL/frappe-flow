@@ -136,6 +136,7 @@ class TestAgentToolLoop(UnitTestCase):
 
 		tool_message = next(m for m in result.messages if m["role"] == "tool")
 		self.assertEqual(tool_message["tool_call_id"], "call_1")
+		self.assertEqual(tool_message["name"], "add")
 		self.assertEqual(tool_message["content"], "5")
 
 	def test_tool_schemas_are_passed_to_model(self):
@@ -388,6 +389,7 @@ class TestAgentConsultation(UnitTestCase):
 		self.assertEqual(result.output, "emailed the customers")
 		tool_msg = next(m for m in result.messages if m["role"] == "tool")
 		self.assertEqual(tool_msg["tool_call_id"], "c1")
+		self.assertEqual(tool_msg["name"], "ask_user")
 		self.assertEqual(tool_msg["content"], "Customers")
 
 	def test_resume_serializes_multiselect_answer(self):
@@ -493,6 +495,8 @@ class TestAgentStreaming(UnitTestCase):
 		self.assertIsInstance(done, Done)
 		self.assertEqual(done.result.output, "five")
 		self.assertEqual(done.result.iterations, 2)
+		tool_message = next(message for message in done.result.messages if message["role"] == "tool")
+		self.assertEqual(tool_message["name"], "add")
 
 	def test_run_stream_paused_ends_with_done_paused(self):
 		@tool

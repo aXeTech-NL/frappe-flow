@@ -57,6 +57,12 @@ scheduler_events = {
 	},
 }
 
-after_migrate = ["flow.assistant.sync_builtin_assistant"]
+# Both lifecycle hooks use the duplicate-safe helper so fresh and existing sites converge.
+after_install = "flow.permissions.ensure_flow_role"
+
+after_migrate = [
+	"flow.permissions.ensure_flow_role",
+	"flow.assistant.sync_builtin_assistant",
+]
 
 extend_bootinfo = "flow.boot.boot_session"

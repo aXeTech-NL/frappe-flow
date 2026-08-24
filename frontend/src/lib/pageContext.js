@@ -54,7 +54,10 @@ export function getPageContext() {
 			type: "list",
 			doctype: list.doctype,
 			filters: list.filter_area?.get?.() || [],
-			names: rows.map((row) => row?.name).filter(Boolean).slice(0, MAX_LIST_ROWS),
+			names: rows
+				.map((row) => row?.name)
+				.filter(Boolean)
+				.slice(0, MAX_LIST_ROWS),
 			fields: listFields(rows),
 			route,
 		};

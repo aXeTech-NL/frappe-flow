@@ -15,10 +15,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import frappe
-import lancedb
 import pyarrow as pa
 
 from flow.knowledge.store import db_path
+from flow.utils.lancedb import lancedb
 
 if TYPE_CHECKING:
 	from flow.flow.doctype.flow_agent_memory.flow_agent_memory import FlowAgentMemory

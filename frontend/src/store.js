@@ -361,8 +361,7 @@ async function send(text, options = {}) {
 				}),
 				...(files.length && { attachments: files }),
 				...(sessionName.value && { session: sessionName.value }),
-				...(selectedAgent.value &&
-					!sessionName.value && { agent: selectedAgent.value }),
+				...(selectedAgent.value && !sessionName.value && { agent: selectedAgent.value }),
 				...(selectedModel.value && { model: selectedModel.value }),
 			},
 			(event) => handleEvent(event, assistant),

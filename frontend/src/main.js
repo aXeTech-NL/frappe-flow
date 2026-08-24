@@ -70,6 +70,7 @@ class FlowPanel {
 		this._mount();
 		this._mountMinimizedBar();
 		this._syncTheme();
+		this._syncVisualViewport();
 		this._registerShortcut();
 		this._registerPageTrigger();
 
@@ -243,6 +244,18 @@ class FlowPanel {
 		});
 	}
 
+	_syncVisualViewport() {
+		const viewport = window.visualViewport;
+		const sync = () => {
+			this.root.style.top = `${viewport?.offsetTop || 0}px`;
+			this.root.style.height = `${viewport?.height || window.innerHeight}px`;
+		};
+		viewport?.addEventListener("resize", sync);
+		viewport?.addEventListener("scroll", sync);
+		window.addEventListener("orientationchange", sync);
+		sync();
+	}
+
 	_registerShortcut() {
 		frappe.ui.keys.add_shortcut({
 			shortcut: "ctrl+i",
@@ -383,7 +396,11 @@ class FlowPanel {
 	show(trigger = null, { forceContext = false } = {}) {
 		if (trigger) {
 			this._lastTrigger = trigger;
-		} else if (!this.open && document.activeElement && !this.root.contains(document.activeElement)) {
+		} else if (
+			!this.open &&
+			document.activeElement &&
+			!this.root.contains(document.activeElement)
+		) {
 			this._lastTrigger = document.activeElement;
 		}
 		this._suggestCurrentPageContext({ force: forceContext });
@@ -458,5 +475,7 @@ class FlowPanel {
 
 frappe.provide("frappe.flow");
 $(document).on("app_ready", () => {
+	// Presentation only: the server enforces the Flow User role on every public endpoint.
+	if (frappe.boot?.flow_enabled === false) return;
 	frappe.flow.panel = new FlowPanel();
 });

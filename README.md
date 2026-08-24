@@ -36,6 +36,23 @@ Flow sets up the RAG pipeline, embeds and indexes the files, and keeps the DocTy
 | `version-16` | `v16.x.x` | Frappe 16 |
 | `develop` | unreleased | tracks upstream development |
 
+### LanceDB on older x86_64 hosts
+
+The standard LanceDB Linux wheel targets Haswell CPUs (AVX2/FMA/F16C) and crashes with
+`Illegal instruction` when a VM does not expose those CPU features. Flow therefore uses
+`lancedb-compat` on x86_64 Linux; it keeps the same `import lancedb` API while selecting a
+supported SIMD implementation at runtime.
+
+When upgrading an existing bench that already installed the standard wheel, replace it once
+before reinstalling Flow's requirements:
+
+```bash
+./env/bin/pip uninstall -y lancedb
+./env/bin/pip install -e apps/flow
+```
+
+Fresh installations select the compatibility wheel automatically.
+
 ## Installation
 
 ### Frappe 16

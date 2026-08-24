@@ -230,9 +230,7 @@ watch(focusTick, () => nextTick(() => el.value?.focus()));
 				"
 				:disabled="inputDisabled"
 				:title="
-					includePageContext
-						? __('Remove page context')
-						: __('Include page context')
+					includePageContext ? __('Remove page context') : __('Include page context')
 				"
 				@click="togglePageContext"
 			>

@@ -70,6 +70,7 @@ class FlowPanel {
 		this._mount();
 		this._mountMinimizedBar();
 		this._syncTheme();
+		this._syncVisualViewport();
 		this._registerShortcut();
 		this._registerPageTrigger();
 
@@ -241,6 +242,18 @@ class FlowPanel {
 			attributes: true,
 			attributeFilter: ["data-theme"],
 		});
+	}
+
+	_syncVisualViewport() {
+		const viewport = window.visualViewport;
+		const sync = () => {
+			this.root.style.top = `${viewport?.offsetTop || 0}px`;
+			this.root.style.height = `${viewport?.height || window.innerHeight}px`;
+		};
+		viewport?.addEventListener("resize", sync);
+		viewport?.addEventListener("scroll", sync);
+		window.addEventListener("orientationchange", sync);
+		sync();
 	}
 
 	_registerShortcut() {

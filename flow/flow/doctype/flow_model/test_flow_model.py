@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
+import json
 from typing import Any
 from unittest.mock import patch
 
@@ -29,7 +30,7 @@ class TestFlowModelValidation(IntegrationTestCase):
 		doc = frappe.get_doc(_model()).insert()
 
 		self.assertEqual(doc.model_id, "openai/gpt-4o-mini")
-		self.assertEqual(doc.api_style, "Auto")
+		self.assertEqual(doc.api_style, "Provider Default")
 		self.assertTrue(doc.enabled)
 
 	def test_normalize_strips_whitespace(self):
@@ -133,8 +134,6 @@ class TestFlowModelParams(IntegrationTestCase):
 	def test_valid_params_json_accepted(self):
 		doc = frappe.get_doc(_model(params='{"temperature": 0.2, "max_tokens": 500}')).insert()
 
-		import json
-
 		self.assertEqual(json.loads(doc.params), {"temperature": 0.2, "max_tokens": 500})
 
 	def test_invalid_json_rejected(self):
@@ -150,11 +149,27 @@ class TestFlowModelParams(IntegrationTestCase):
 			doc.insert()
 
 	def test_reserved_params_rejected(self):
-		for reserved in ("model", "api_key", "messages", "stream", "tools"):
+		for reserved in ("model", "api_key", "messages", "input", "stream", "tools"):
 			with self.subTest(key=reserved):
 				doc = frappe.get_doc(_model(params=f'{{"{reserved}": "x"}}'))
 				with self.assertRaisesRegex(frappe.ValidationError, "reserved keys"):
 					doc.insert()
+
+	def test_model_request_settings_allow_safe_overrides(self):
+		doc = frappe.get_doc(
+			_model(params='{"extra_headers": {"X-Model": "yes"}, "extra_query": {"version": "2"}}')
+		).insert()
+		self.assertEqual(json.loads(doc.params)["extra_headers"], {"X-Model": "yes"})
+
+	def test_model_request_settings_reject_reserved_nested_keys(self):
+		for params in (
+			'{"extra_headers": {"Authorization": "secret"}}',
+			'{"extra_query": {"api_key": "secret"}}',
+			'{"extra_body": {"messages": []}}',
+		):
+			with self.subTest(params=params):
+				with self.assertRaisesRegex(frappe.ValidationError, "reserved keys"):
+					frappe.get_doc(_model(params=params)).insert()
 
 
 class TestFlowModelConnection(IntegrationTestCase):

@@ -8,12 +8,30 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-# Keys litellm derives itself or that have dedicated fields — not allowed in extra_params.
+# Keys LiteLLM derives itself or that have dedicated fields.
 RESERVED_PARAM_KEYS = frozenset(
-	{"model", "api_key", "api_base", "base_url", "messages", "stream", "tools", "tool_choice"}
+	{
+		"model",
+		"api_key",
+		"api_base",
+		"base_url",
+		"messages",
+		"input",
+		"stream",
+		"tools",
+		"tool_choice",
+		"extra_headers",
+		"extra_query",
+		"extra_body",
+	}
 )
+RESERVED_REQUEST_KEYS = frozenset(
+	{"model", "api_key", "api_base", "base_url", "messages", "input", "stream", "tools", "tool_choice"}
+)
+RESERVED_HEADER_KEYS = frozenset({"authorization", "api-key", "x-api-key"})
 CUSTOM_CONNECTOR = "custom"
 OPENAI_LIKE_CONNECTOR = "openai_like"
+API_STYLES = frozenset({"Auto", "Responses", "Chat Completions"})
 
 
 def connector_id(value: str | None) -> str:
@@ -30,6 +48,30 @@ def known_connectors() -> list[str]:
 	return ["Custom", *sorted({provider.value for provider in litellm.provider_list})]
 
 
+def parse_json_object(value: str | None, label: str) -> dict:
+	if not value:
+		return {}
+	try:
+		parsed = json.loads(value)
+	except (TypeError, ValueError):
+		frappe.throw(_("{0} must be valid JSON.").format(label), title=_("Invalid JSON"))
+	if not isinstance(parsed, dict):
+		frappe.throw(_("{0} must be a JSON object.").format(label), title=_("Invalid JSON"))
+	return parsed
+
+
+def validate_request_settings(fieldname: str, value: str | None, label: str) -> None:
+	parsed = parse_json_object(value, label)
+	reserved = RESERVED_HEADER_KEYS if fieldname == "extra_headers" else RESERVED_REQUEST_KEYS
+	keys = {str(key).lower() for key in parsed}
+	conflicting = sorted(reserved.intersection(keys))
+	if conflicting:
+		frappe.throw(
+			_("{0} may not include reserved keys: {1}.").format(label, ", ".join(conflicting)),
+			title=_("Reserved Settings"),
+		)
+
+
 class FlowProvider(Document):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -40,10 +82,17 @@ class FlowProvider(Document):
 		from frappe.types import DF
 
 		api_key: DF.Password | None
+		api_style: DF.Literal["Auto", "Chat Completions", "Responses"]
 		base_url: DF.Data | None
+		chat_base_url: DF.Data | None
+		embedding_base_url: DF.Data | None
 		enabled: DF.Check
+		extra_body: DF.JSON | None
+		extra_headers: DF.JSON | None
 		extra_params: DF.JSON | None
+		extra_query: DF.JSON | None
 		provider: DF.Data
+		responses_base_url: DF.Data | None
 		title: DF.Data
 	# end: auto-generated types
 
@@ -56,14 +105,18 @@ class FlowProvider(Document):
 	def validate(self):
 		self._normalize()
 		self._validate_provider_known()
-		self._validate_base_url()
-		self._validate_extra_params()
+		self._validate_urls()
+		self._validate_json_settings()
+		if (self.api_style or "Auto") not in API_STYLES:
+			frappe.throw(_("Invalid default API Style."), title=_("Invalid API Style"))
 
 	def _normalize(self):
 		self.title = (self.title or "").strip()
 		self.provider = (self.provider or "").strip().lower()
-		if isinstance(self.base_url, str):
-			self.base_url = self.base_url.strip()
+		for fieldname in ("base_url", "chat_base_url", "responses_base_url", "embedding_base_url"):
+			value = self.get(fieldname)
+			if isinstance(value, str):
+				self.set(fieldname, value.strip())
 		if isinstance(self.api_key, str):
 			self.api_key = self.api_key.strip()
 
@@ -83,33 +136,38 @@ class FlowProvider(Document):
 				title=_("Invalid Connector"),
 			)
 
-	def _validate_base_url(self):
-		if self.provider == CUSTOM_CONNECTOR and not self.base_url:
+	def _validate_urls(self):
+		url_fields = ("base_url", "chat_base_url", "responses_base_url", "embedding_base_url")
+		if self.provider == CUSTOM_CONNECTOR and not any(self.get(fieldname) for fieldname in url_fields):
 			frappe.throw(
-				_("Base URL is required for a Custom OpenAI-compatible connection."),
+				_("At least one Base URL is required for a Custom OpenAI-compatible connection."),
 				title=_("Base URL Required"),
 			)
-		if not self.base_url:
-			return
-		parsed = urlparse(self.base_url)
-		if parsed.scheme not in ("http", "https") or not parsed.netloc:
-			frappe.throw(_("Base URL must be an absolute http(s) URL."), title=_("Invalid Base URL"))
+		for fieldname in url_fields:
+			value = self.get(fieldname)
+			if not value:
+				continue
+			parsed = urlparse(value)
+			if parsed.scheme not in ("http", "https") or not parsed.netloc:
+				frappe.throw(
+					_("{0} must be an absolute http(s) URL.").format(self.meta.get_label(fieldname)),
+					title=_("Invalid Base URL"),
+				)
 
-	def _validate_extra_params(self):
-		if not self.extra_params:
-			return
-		try:
-			parsed = json.loads(self.extra_params)
-		except (TypeError, ValueError):
-			frappe.throw(_("Extra Params must be valid JSON."), title=_("Invalid Params"))
-		if not isinstance(parsed, dict):
-			frappe.throw(_("Extra Params must be a JSON object."), title=_("Invalid Params"))
-		conflicting = sorted(RESERVED_PARAM_KEYS.intersection(parsed))
+	def _validate_json_settings(self):
+		extra_params = parse_json_object(self.extra_params, _("Extra Params"))
+		conflicting = sorted(RESERVED_PARAM_KEYS.intersection(extra_params))
 		if conflicting:
 			frappe.throw(
 				_("Extra Params may not include reserved keys: {0}.").format(", ".join(conflicting)),
 				title=_("Reserved Params"),
 			)
+		for fieldname, label in (
+			("extra_headers", _("Extra Headers")),
+			("extra_query", _("Extra Query")),
+			("extra_body", _("Extra Body")),
+		):
+			validate_request_settings(fieldname, self.get(fieldname), label)
 
 
 @frappe.whitelist()

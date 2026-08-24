@@ -13,7 +13,15 @@
   "api_key",
   "base_url",
   "section_break_params",
-  "extra_params"
+  "extra_params",
+  "section_break_advanced",
+  "api_style",
+  "chat_base_url",
+  "responses_base_url",
+  "embedding_base_url",
+  "extra_headers",
+  "extra_query",
+  "extra_body"
  ],
  "fields": [
   {
@@ -51,7 +59,7 @@
    "label": "API Key"
   },
   {
-   "description": "Optional endpoint override. Custom connections require an absolute http(s) URL.",
+   "description": "Generic endpoint fallback. Custom connections require this or at least one operation-specific Base URL.",
    "fieldname": "base_url",
    "fieldtype": "Data",
    "label": "Base URL"
@@ -67,6 +75,56 @@
    "fieldname": "extra_params",
    "fieldtype": "JSON",
    "label": "Extra Params"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_advanced",
+   "fieldtype": "Section Break",
+   "label": "Advanced Settings"
+  },
+  {
+   "default": "Auto",
+   "description": "Default chat API for models linked to this connection. Auto uses Responses for direct official OpenAI connections and LiteLLM defaults for proxies, Custom and other connectors.",
+   "fieldname": "api_style",
+   "fieldtype": "Select",
+   "label": "Default API Style",
+   "options": "Auto\nResponses\nChat Completions"
+  },
+  {
+   "description": "Endpoint used for Chat Completions calls before falling back to Base URL.",
+   "fieldname": "chat_base_url",
+   "fieldtype": "Data",
+   "label": "Chat Completions Base URL"
+  },
+  {
+   "description": "Endpoint used for Responses calls before falling back to Base URL.",
+   "fieldname": "responses_base_url",
+   "fieldtype": "Data",
+   "label": "Responses Base URL"
+  },
+  {
+   "description": "Endpoint used for embeddings before falling back to Base URL. Chat API Style does not affect embeddings.",
+   "fieldname": "embedding_base_url",
+   "fieldtype": "Data",
+   "label": "Embeddings Base URL"
+  },
+  {
+   "description": "Optional JSON object of additional HTTP headers. Authentication headers are reserved.",
+   "fieldname": "extra_headers",
+   "fieldtype": "JSON",
+   "label": "Extra Headers"
+  },
+  {
+   "description": "Optional JSON object of additional query parameters. Routing and authentication keys are reserved.",
+   "fieldname": "extra_query",
+   "fieldtype": "JSON",
+   "label": "Extra Query"
+  },
+  {
+   "description": "Optional JSON object merged into the OpenAI-compatible request body. Message, tool, routing and authentication keys are reserved.",
+   "fieldname": "extra_body",
+   "fieldtype": "JSON",
+   "label": "Extra Body"
   }
  ],
  "links": [],

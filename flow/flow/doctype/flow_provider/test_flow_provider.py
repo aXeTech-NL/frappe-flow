@@ -58,10 +58,25 @@ class TestFlowProviderValidation(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Unknown connector"):
 			doc.insert()
 
-	def test_custom_is_openai_compatible_and_requires_base_url(self):
+	def test_title_patch_preserves_legacy_name_and_model_link(self):
+		from flow.patches.backfill_flow_provider_titles import execute
+
+		connection = frappe.get_doc(_provider(title="Legacy Connection")).insert()
+		legacy_name = frappe.rename_doc("Flow Provider", connection.name, "openrouter", force=True)
+		model = frappe.get_doc(_model(provider=legacy_name, model_id="test/model")).insert()
+		frappe.db.set_value("Flow Provider", legacy_name, "title", "", update_modified=False)
+
+		execute()
+
+		self.assertEqual(frappe.db.get_value("Flow Provider", legacy_name, "title"), "openrouter")
+		self.assertEqual(frappe.db.get_value("Flow Model", model.name, "provider"), legacy_name)
+
+	def test_custom_is_openai_compatible_and_requires_a_base_url(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "Base URL is required"):
 			frappe.get_doc(_provider(provider="Custom")).insert()
-		doc = frappe.get_doc(_provider(provider="Custom", base_url="https://custom.example.com/v1")).insert()
+		doc = frappe.get_doc(
+			_provider(provider="Custom", responses_base_url="https://custom.example.com/v1")
+		).insert()
 		self.assertEqual(doc.provider, "custom")
 		self.assertEqual(connector_id(doc.provider), "openai_like")
 
@@ -79,6 +94,32 @@ class TestFlowProviderValidation(IntegrationTestCase):
 		doc = frappe.get_doc(_provider(extra_params="{not json"))
 		with self.assertRaisesRegex(frappe.ValidationError, "valid JSON"):
 			doc.insert()
+
+	def test_operation_base_urls_are_validated(self):
+		for fieldname in ("chat_base_url", "responses_base_url", "embedding_base_url"):
+			with self.subTest(fieldname=fieldname):
+				with self.assertRaisesRegex(frappe.ValidationError, "absolute http"):
+					frappe.get_doc(_provider(**{fieldname: "not-a-url"})).insert()
+
+	def test_advanced_json_settings_accept_safe_objects(self):
+		doc = frappe.get_doc(
+			_provider(
+				extra_headers='{"X-Tenant": "acme"}',
+				extra_query='{"api-version": "2026-01-01"}',
+				extra_body='{"metadata": {"source": "flow"}}',
+			)
+		).insert()
+		self.assertEqual(doc.api_style, "Auto")
+
+	def test_advanced_json_settings_reject_reserved_keys(self):
+		for fieldname, value in (
+			("extra_headers", '{"Authorization": "Bearer secret"}'),
+			("extra_query", '{"api_key": "secret"}'),
+			("extra_body", '{"messages": []}'),
+		):
+			with self.subTest(fieldname=fieldname):
+				with self.assertRaisesRegex(frappe.ValidationError, "reserved keys"):
+					frappe.get_doc(_provider(**{fieldname: value})).insert()
 
 
 class TestProviderCredentialResolution(IntegrationTestCase):

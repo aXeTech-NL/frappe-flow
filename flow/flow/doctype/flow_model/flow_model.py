@@ -61,13 +61,20 @@ class FlowModel(Document):
 			self.api_key = self.api_key.strip()
 
 	def _apply_provider(self):
-		# A linked provider lets the user enter just the model; compose the
-		# canonical provider/model id. Idempotent if the prefix is already present.
+		# The Link identifies a connection document; the stored connector composes
+		# the LiteLLM model ID. Existing provider/model IDs remain idempotent.
 		if not self.provider:
 			return
-		prefix = f"{self.provider}/"
-		if self.model_id and not self.model_id.startswith(prefix):
-			self.model_id = prefix + self.model_id
+		from flow.flow.doctype.flow_provider.flow_provider import connector_id
+
+		connection = frappe.get_doc("Flow Provider", self.provider)
+		connector = connector_id(connection.provider)
+		model = self.model_id or ""
+		if "/" in model:
+			current_connector, model = model.split("/", 1)
+			if current_connector == connector:
+				return
+		self.model_id = f"{connector}/{model}"
 
 	def _validate_model_id(self):
 		if not MODEL_ID_PATTERN.match(self.model_id or ""):
@@ -133,7 +140,7 @@ class FlowModel(Document):
 
 		from flow.lib.model import API_STYLE_AUTO, resolve_provider_credentials, route_model_id
 
-		provider_creds = resolve_provider_credentials(self.model_id)
+		provider_creds = resolve_provider_credentials(self.model_id, self.provider)
 		api_key = self.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or None
 		base_url = self.base_url or provider_creds.get("base_url")
 
@@ -173,4 +180,7 @@ def get_provider_models(provider: str | None = None) -> list[str]:
 
 	import litellm
 
-	return sorted(litellm.models_by_provider.get(provider.strip().lower(), set()))
+	from flow.flow.doctype.flow_provider.flow_provider import connector_id
+
+	connection = frappe.get_doc("Flow Provider", provider)
+	return sorted(litellm.models_by_provider.get(connector_id(connection.provider), set()))

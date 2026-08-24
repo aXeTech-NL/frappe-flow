@@ -56,6 +56,7 @@ class Model:
 		timeout: int = DEFAULT_TIMEOUT,
 		api_style: str | None = None,
 	):
+		connection_name = None
 		if name is not None:
 			if model_id or api_key or base_url or params or api_style is not None:
 				raise ValueError("Pass either a Flow Model doc name or explicit kwargs, not both.")
@@ -67,6 +68,7 @@ class Model:
 			base_url = doc.base_url or None
 			params = json.loads(doc.params) if doc.params else {}
 			api_style = getattr(doc, "api_style", None) or API_STYLE_AUTO
+			connection_name = getattr(doc, "provider", None) or None
 
 		if not model_id:
 			raise ValueError("model_id is required")
@@ -75,7 +77,7 @@ class Model:
 			raise ValueError(f"api_style must be one of {sorted(API_STYLES)}, got {api_style!r}")
 
 		# Fall back to the central Flow Provider store for anything not set on the model itself.
-		provider_creds = resolve_provider_credentials(model_id)
+		provider_creds = resolve_provider_credentials(model_id, connection_name)
 		api_key = api_key or provider_creds.get("api_key")
 		base_url = base_url or provider_creds.get("base_url")
 		if provider_creds.get("extra_params"):
@@ -146,22 +148,37 @@ def route_model_id(model_id: str, api_style: str | None = None, base_url: str | 
 	return model_id
 
 
-def resolve_provider_credentials(model_id: str) -> dict[str, Any]:
-	"""Look up central Flow Provider credentials for a model's provider."""
+def resolve_provider_credentials(model_id: str, connection_name: str | None = None) -> dict[str, Any]:
+	"""Resolve one enabled Flow Provider connection.
+
+	A linked Flow Model always addresses its exact connection. Unlinked legacy
+	models retain implicit lookup only when one enabled connection matches the
+	LiteLLM connector; duplicate matches intentionally return no credentials.
+	"""
+	if connection_name:
+		try:
+			doc = frappe.get_doc("Flow Provider", connection_name)
+		except Exception:
+			return {}
+		return _provider_credentials(doc) if doc.enabled else {}
+
 	try:
 		import litellm
 
 		provider = litellm.get_llm_provider(model_id)[1]
+		from flow.flow.doctype.flow_provider.flow_provider import connector_id
+
+		rows = frappe.get_all("Flow Provider", filters={"enabled": 1}, fields=["name", "provider"])
+		matches = [row.name for row in rows if connector_id(row.provider) == provider]
 	except Exception:
 		return {}
 
-	if not provider or not frappe.db.exists("Flow Provider", provider):
+	if len(matches) != 1:
 		return {}
+	return _provider_credentials(frappe.get_doc("Flow Provider", matches[0]))
 
-	doc = frappe.get_doc("Flow Provider", provider)
-	if not doc.enabled:
-		return {}
 
+def _provider_credentials(doc: Any) -> dict[str, Any]:
 	return {
 		"api_key": doc.get_password("api_key", raise_exception=False) or None,
 		"base_url": doc.base_url or None,

@@ -54,7 +54,7 @@ def _model_config(model: str) -> dict[str, Any]:
 	if not doc.enabled:
 		frappe.throw(_("Flow Model {0} is disabled.").format(model), title=_("Model Disabled"))
 
-	provider_creds = resolve_provider_credentials(doc.model_id)
+	provider_creds = resolve_provider_credentials(doc.model_id, doc.provider)
 	config: dict[str, Any] = {
 		"model": doc.model_id,
 		"api_key": doc.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or "",

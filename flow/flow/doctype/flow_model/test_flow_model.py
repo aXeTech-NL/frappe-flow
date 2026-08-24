@@ -60,27 +60,42 @@ class TestFlowModelValidation(IntegrationTestCase):
 
 class TestFlowModelProvider(IntegrationTestCase):
 	def setUp(self):
-		if not frappe.db.exists("Flow Provider", "anthropic"):
-			frappe.get_doc({"doctype": "Flow Provider", "provider": "anthropic"}).insert()
+		self.connection = frappe.get_doc(
+			{"doctype": "Flow Provider", "title": "Anthropic Test", "provider": "anthropic"}
+		).insert()
 
 	def tearDown(self):
 		frappe.db.rollback()
 
-	def test_linked_provider_composes_model_id(self):
-		doc = frappe.get_doc(_model(provider="anthropic", model_id="claude-sonnet-4-6")).insert()
+	def test_linked_provider_composes_model_id_from_connector(self):
+		doc = frappe.get_doc(_model(provider=self.connection.name, model_id="claude-sonnet-4-6")).insert()
 
 		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
 
 	def test_compose_is_idempotent_for_prefixed_model_id(self):
-		doc = frappe.get_doc(_model(provider="anthropic", model_id="anthropic/claude-sonnet-4-6")).insert()
+		doc = frappe.get_doc(
+			_model(provider=self.connection.name, model_id="anthropic/claude-sonnet-4-6")
+		).insert()
 
 		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
 
 	def test_resave_does_not_double_prefix(self):
-		doc = frappe.get_doc(_model(provider="anthropic", model_id="claude-sonnet-4-6")).insert()
+		doc = frappe.get_doc(_model(provider=self.connection.name, model_id="claude-sonnet-4-6")).insert()
 		doc.save()
 
 		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
+
+	def test_custom_connection_composes_openai_like_model_id(self):
+		connection = frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"title": "Custom Gateway",
+				"provider": "Custom",
+				"base_url": "https://gateway.example.com/v1",
+			}
+		).insert()
+		doc = frappe.get_doc(_model(provider=connection.name, model_id="my-model")).insert()
+		self.assertEqual(doc.model_id, "openai_like/my-model")
 
 	def test_full_model_id_without_provider_still_works(self):
 		doc = frappe.get_doc(_model(model_id="openai/gpt-4o-mini")).insert()

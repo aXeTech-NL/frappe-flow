@@ -224,7 +224,7 @@
   {
    "if_owner": 1,
    "read": 1,
-   "role": "All"
+   "role": "Flow User"
   }
  ],
  "row_format": "Dynamic",

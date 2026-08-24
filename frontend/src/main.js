@@ -458,5 +458,7 @@ class FlowPanel {
 
 frappe.provide("frappe.flow");
 $(document).on("app_ready", () => {
+	// Presentation only: the server enforces the Flow User role on every public endpoint.
+	if (frappe.boot?.flow_enabled === false) return;
 	frappe.flow.panel = new FlowPanel();
 });

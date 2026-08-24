@@ -109,7 +109,7 @@
    "delete": 1,
    "if_owner": 1,
    "read": 1,
-   "role": "All",
+   "role": "Flow User",
    "write": 1
   }
  ],

@@ -13,6 +13,7 @@ from flow.api import attach_file, recover_session, resume_run, start_run, submit
 from flow.api.api import _parse_attachments
 from flow.lib.model import ChatResponse, Model, ToolCall
 from flow.memory import store as memory_store
+from flow.permissions import FLOW_USER_ROLE, ensure_flow_role
 from flow.tools.builtins import sync_builtin_tools
 
 
@@ -680,18 +681,19 @@ class TestAttachFile(IntegrationTestCase):
 
 
 def _ensure_user(email: str) -> str:
-	if frappe.db.exists("User", email):
-		return email
-	user = frappe.get_doc(
-		{
-			"doctype": "User",
-			"email": email,
-			"first_name": email.split("@")[0],
-			"send_welcome_email": 0,
-			"enabled": 1,
-		}
-	)
-	user.insert(ignore_permissions=True)
+	"""Create a legitimate Flow user for tests of ownership, not role access."""
+	ensure_flow_role()
+	if not frappe.db.exists("User", email):
+		frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": email.split("@")[0],
+				"send_welcome_email": 0,
+				"enabled": 1,
+			}
+		).insert(ignore_permissions=True)
+	frappe.get_doc("User", email).add_roles(FLOW_USER_ROLE)
 	return email
 
 

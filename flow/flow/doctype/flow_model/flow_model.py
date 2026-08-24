@@ -26,6 +26,7 @@ class FlowModel(Document):
 		from frappe.types import DF
 
 		api_key: DF.Password | None
+		api_style: DF.Literal["Auto", "Chat Completions", "Responses"]
 		base_url: DF.Data | None
 		context_window: DF.Int
 		enabled: DF.Check
@@ -130,14 +131,14 @@ class FlowModel(Document):
 				title=_("Missing Dependency"),
 			)
 
-		from flow.lib.model import resolve_provider_credentials
+		from flow.lib.model import API_STYLE_AUTO, resolve_provider_credentials, route_model_id
 
 		provider_creds = resolve_provider_credentials(self.model_id)
 		api_key = self.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or None
 		base_url = self.base_url or provider_creds.get("base_url")
 
 		kwargs = {
-			"model": self.model_id,
+			"model": route_model_id(self.model_id, self.api_style or API_STYLE_AUTO, base_url),
 			"api_key": api_key,
 			"messages": [{"role": "user", "content": "ping"}],
 			"max_tokens": 1,

@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -19,6 +20,7 @@ from flow.flow.doctype.flow_session.flow_session import (
 	_inject_retrieved_chunks,
 	_note_retrieval_files,
 	_route_attachment,
+	_row_to_message,
 	derive_title,
 )
 
@@ -314,6 +316,98 @@ class TestBuildPromptMessages(IntegrationTestCase):
 		s.save(ignore_permissions=True)
 		content = next(m for m in s._build_prompt_messages() if m["role"] == "user")["content"]
 		self.assertEqual(content, "hello")
+
+	def test_invalid_tool_calls_json_still_raises(self):
+		row = SimpleNamespace(role="assistant", content=None, tool_calls="{invalid")
+
+		with self.assertRaises(json.JSONDecodeError):
+			_row_to_message(row, {})
+
+	def test_long_tool_call_id_is_persisted(self):
+		call_id = "call_" + "x" * 200
+		s = frappe.get_doc({"doctype": "Flow Session"}).insert(ignore_permissions=True)
+		s.append("messages", {"role": "tool", "tool_call_id": call_id, "content": "result"})
+
+		s.save(ignore_permissions=True)
+		s.reload()
+
+		self.assertGreater(len(s.messages[0].tool_call_id), 140)
+		self.assertEqual(s.messages[0].tool_call_id, call_id)
+
+	def test_persisted_tool_names_are_reconstructed_for_transcript_and_prompt(self):
+		s = frappe.get_doc({"doctype": "Flow Session"}).insert(ignore_permissions=True)
+		s.append("messages", {"role": "user", "content": "look it up"})
+		s.append(
+			"messages",
+			{
+				"role": "assistant",
+				"tool_calls": json.dumps(
+					[
+						{
+							"id": "call_lookup",
+							"type": "function",
+							"function": {"name": "lookup", "arguments": "{}"},
+						}
+					]
+				),
+			},
+		)
+		s.append("messages", {"role": "tool", "tool_call_id": "call_lookup", "content": "found"})
+		s.append("messages", {"role": "user", "content": "continue"})
+		s.save(ignore_permissions=True)
+		s.reload()
+		s._snapshot = {"model": None}
+
+		transcript_tool = next(message for message in s.transcript() if message["role"] == "tool")
+		subsequent_prompt_tool = next(
+			message for message in s._build_prompt_messages() if message["role"] == "tool"
+		)
+
+		self.assertEqual(transcript_tool["name"], "lookup")
+		self.assertEqual(subsequent_prompt_tool["name"], "lookup")
+
+	def test_persisted_tool_names_are_reconstructed_in_resumed_prompt(self):
+		s = frappe.get_doc({"doctype": "Flow Session"}).insert(ignore_permissions=True)
+		s.append(
+			"messages",
+			{
+				"role": "assistant",
+				"tool_calls": json.dumps(
+					[
+						{
+							"id": "call_done",
+							"type": "function",
+							"function": {"name": "lookup", "arguments": "{}"},
+						}
+					]
+				),
+			},
+		)
+		s.append("messages", {"role": "tool", "tool_call_id": "call_done", "content": "found"})
+		s.append(
+			"messages",
+			{
+				"role": "assistant",
+				"tool_calls": json.dumps(
+					[
+						{
+							"id": "call_pending",
+							"type": "function",
+							"function": {"name": "ask_user", "arguments": "{}"},
+						}
+					]
+				),
+			},
+		)
+		s.save(ignore_permissions=True)
+		s.reload()
+		s._snapshot = {"model": None}
+
+		resumed_prompt_tool = next(
+			message for message in s._build_prompt_messages() if message["role"] == "tool"
+		)
+
+		self.assertEqual(resumed_prompt_tool["name"], "lookup")
 
 	def test_page_context_is_ephemeral_user_content(self):
 		s = frappe.get_doc({"doctype": "Flow Session"}).insert(ignore_permissions=True)

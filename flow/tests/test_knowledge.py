@@ -548,6 +548,43 @@ class TestExtract(IntegrationTestCase):
 		image.save(buffer, format="PDF", resolution=100)
 		self.assertIn("Scanned", _extract_pdf(buffer.getvalue()))
 
+	def test_extract_pdf_serializes_pdfium_access_across_threads(self):
+		import io
+		import threading
+		import time
+		from concurrent.futures import ThreadPoolExecutor
+
+		from PIL import Image, ImageDraw
+
+		image = Image.new("RGB", (200, 100), "white")
+		ImageDraw.Draw(image).text((10, 40), "Scan", fill="black")
+		buffer = io.BytesIO()
+		image.save(buffer, format="PDF", resolution=100)
+		data = buffer.getvalue()
+
+		state = {"current": 0, "max": 0}
+		guard = threading.Lock()
+
+		def fake_render(page):
+			with guard:
+				state["current"] += 1
+				state["max"] = max(state["max"], state["current"])
+			time.sleep(0.05)
+			with guard:
+				state["current"] -= 1
+			return b""
+
+		with (
+			patch("flow.knowledge.extract._render_page_png", side_effect=fake_render),
+			patch("flow.knowledge.extract._ocr_image", return_value=""),
+			ThreadPoolExecutor(max_workers=4) as executor,
+		):
+			futures = [executor.submit(_extract_pdf, data) for _ in range(4)]
+			for future in futures:
+				future.result()
+
+		self.assertEqual(state["max"], 1)
+
 	def test_validate_public_url_rejects_non_http_scheme(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "http"):
 			_validate_public_url("ftp://example.com/x")

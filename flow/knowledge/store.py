@@ -15,9 +15,10 @@ from __future__ import annotations
 from typing import Any
 
 import frappe
-import lancedb
 import pyarrow as pa
 from frappe import _
+
+from flow.utils.lancedb import lancedb
 
 TABLE_NAME = "chunks"
 FTS_FIELD = "content"

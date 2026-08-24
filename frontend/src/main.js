@@ -396,7 +396,11 @@ class FlowPanel {
 	show(trigger = null, { forceContext = false } = {}) {
 		if (trigger) {
 			this._lastTrigger = trigger;
-		} else if (!this.open && document.activeElement && !this.root.contains(document.activeElement)) {
+		} else if (
+			!this.open &&
+			document.activeElement &&
+			!this.root.contains(document.activeElement)
+		) {
 			this._lastTrigger = document.activeElement;
 		}
 		this._suggestCurrentPageContext({ force: forceContext });

@@ -12,8 +12,10 @@ from frappe.model.document import Document
 MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_\-]*\/[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
 
 RESERVED_PARAM_KEYS = frozenset(
-	{"model", "api_key", "api_base", "base_url", "messages", "stream", "tools", "tool_choice"}
+	{"model", "api_key", "api_base", "base_url", "messages", "input", "stream", "tools", "tool_choice"}
 )
+RESERVED_HEADER_KEYS = frozenset({"authorization", "api-key", "x-api-key"})
+REQUEST_SETTING_KEYS = ("extra_headers", "extra_query", "extra_body")
 
 
 class FlowModel(Document):
@@ -26,6 +28,7 @@ class FlowModel(Document):
 		from frappe.types import DF
 
 		api_key: DF.Password | None
+		api_style: DF.Literal["Auto", "Chat Completions", "Provider Default", "Responses"]
 		base_url: DF.Data | None
 		context_window: DF.Int
 		enabled: DF.Check
@@ -60,13 +63,20 @@ class FlowModel(Document):
 			self.api_key = self.api_key.strip()
 
 	def _apply_provider(self):
-		# A linked provider lets the user enter just the model; compose the
-		# canonical provider/model id. Idempotent if the prefix is already present.
+		# The Link identifies a connection document; the stored connector composes
+		# the LiteLLM model ID. Existing provider/model IDs remain idempotent.
 		if not self.provider:
 			return
-		prefix = f"{self.provider}/"
-		if self.model_id and not self.model_id.startswith(prefix):
-			self.model_id = prefix + self.model_id
+		from flow.flow.doctype.flow_provider.flow_provider import connector_id
+
+		connection = frappe.get_doc("Flow Provider", self.provider)
+		connector = connector_id(connection.provider)
+		model = self.model_id or ""
+		if "/" in model:
+			current_connector, model = model.split("/", 1)
+			if current_connector == connector:
+				return
+		self.model_id = f"{connector}/{model}"
 
 	def _validate_model_id(self):
 		if not MODEL_ID_PATTERN.match(self.model_id or ""):
@@ -102,6 +112,19 @@ class FlowModel(Document):
 				_("Params may not include reserved keys: {0}.").format(", ".join(conflicting)),
 				title=_("Reserved Params"),
 			)
+		for key in REQUEST_SETTING_KEYS:
+			if key not in parsed:
+				continue
+			if not isinstance(parsed[key], dict):
+				frappe.throw(_("{0} in Params must be a JSON object.").format(key))
+			reserved = RESERVED_HEADER_KEYS if key == "extra_headers" else RESERVED_PARAM_KEYS
+			nested_keys = {str(value).lower() for value in parsed[key]}
+			nested_conflicts = sorted(reserved.intersection(nested_keys))
+			if nested_conflicts:
+				frappe.throw(
+					_("{0} may not include reserved keys: {1}.").format(key, ", ".join(nested_conflicts)),
+					title=_("Reserved Params"),
+				)
 
 	def _resolve_context_window(self):
 		# Always derived from the model — never user input. Keeps the last detected value when
@@ -130,21 +153,11 @@ class FlowModel(Document):
 				title=_("Missing Dependency"),
 			)
 
-		from flow.lib.model import resolve_provider_credentials
+		from flow.lib.model import Model
 
-		provider_creds = resolve_provider_credentials(self.model_id)
-		api_key = self.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or None
-		base_url = self.base_url or provider_creds.get("base_url")
-
-		kwargs = {
-			"model": self.model_id,
-			"api_key": api_key,
-			"messages": [{"role": "user", "content": "ping"}],
-			"max_tokens": 1,
-			"timeout": 15,
-		}
-		if base_url:
-			kwargs["api_base"] = base_url
+		model = Model(self.name)
+		kwargs = model.completion_kwargs([{"role": "user", "content": "ping"}])
+		kwargs.update(max_tokens=1, timeout=15)
 
 		try:
 			litellm.completion(**kwargs)
@@ -172,4 +185,7 @@ def get_provider_models(provider: str | None = None) -> list[str]:
 
 	import litellm
 
-	return sorted(litellm.models_by_provider.get(provider.strip().lower(), set()))
+	from flow.flow.doctype.flow_provider.flow_provider import connector_id
+
+	connection = frappe.get_doc("Flow Provider", provider)
+	return sorted(litellm.models_by_provider.get(connector_id(connection.provider), set()))

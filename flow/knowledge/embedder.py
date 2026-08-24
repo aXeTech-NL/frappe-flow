@@ -9,6 +9,7 @@ falling back to the central Flow Provider store.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import frappe
@@ -48,18 +49,24 @@ def _embedding_config() -> dict[str, Any]:
 
 
 def _model_config(model: str) -> dict[str, Any]:
-	from flow.lib.model import resolve_provider_credentials
+	from flow.lib.model import REQUEST_SETTING_KEYS, _merge_params, resolve_provider_credentials
 
 	doc = frappe.get_doc("Flow Model", model)
 	if not doc.enabled:
 		frappe.throw(_("Flow Model {0} is disabled.").format(model), title=_("Model Disabled"))
 
-	provider_creds = resolve_provider_credentials(doc.model_id)
+	provider_config = resolve_provider_credentials(doc.model_id, doc.provider)
+	provider_params = provider_config.get("extra_params") or {}
+	for key in REQUEST_SETTING_KEYS:
+		if provider_config.get(key):
+			provider_params[key] = provider_config[key]
+	model_params = json.loads(doc.params) if doc.params else {}
 	config: dict[str, Any] = {
+		**_merge_params(provider_params, model_params),
 		"model": doc.model_id,
-		"api_key": doc.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or "",
+		"api_key": doc.get_password("api_key", raise_exception=False) or provider_config.get("api_key") or "",
 	}
-	base_url = doc.base_url or provider_creds.get("base_url")
+	base_url = doc.base_url or provider_config.get("embedding_base_url") or provider_config.get("base_url")
 	if base_url:
 		config["api_base"] = base_url
 	return config

@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Frappe Technologies and Contributors
 # See license.txt
 
+import json
 from typing import Any
 from unittest.mock import patch
 
@@ -29,6 +30,7 @@ class TestFlowModelValidation(IntegrationTestCase):
 		doc = frappe.get_doc(_model()).insert()
 
 		self.assertEqual(doc.model_id, "openai/gpt-4o-mini")
+		self.assertEqual(doc.api_style, "Provider Default")
 		self.assertTrue(doc.enabled)
 
 	def test_normalize_strips_whitespace(self):
@@ -59,27 +61,42 @@ class TestFlowModelValidation(IntegrationTestCase):
 
 class TestFlowModelProvider(IntegrationTestCase):
 	def setUp(self):
-		if not frappe.db.exists("Flow Provider", "anthropic"):
-			frappe.get_doc({"doctype": "Flow Provider", "provider": "anthropic"}).insert()
+		self.connection = frappe.get_doc(
+			{"doctype": "Flow Provider", "title": "Anthropic Test", "provider": "anthropic"}
+		).insert()
 
 	def tearDown(self):
 		frappe.db.rollback()
 
-	def test_linked_provider_composes_model_id(self):
-		doc = frappe.get_doc(_model(provider="anthropic", model_id="claude-sonnet-4-6")).insert()
+	def test_linked_provider_composes_model_id_from_connector(self):
+		doc = frappe.get_doc(_model(provider=self.connection.name, model_id="claude-sonnet-4-6")).insert()
 
 		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
 
 	def test_compose_is_idempotent_for_prefixed_model_id(self):
-		doc = frappe.get_doc(_model(provider="anthropic", model_id="anthropic/claude-sonnet-4-6")).insert()
+		doc = frappe.get_doc(
+			_model(provider=self.connection.name, model_id="anthropic/claude-sonnet-4-6")
+		).insert()
 
 		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
 
 	def test_resave_does_not_double_prefix(self):
-		doc = frappe.get_doc(_model(provider="anthropic", model_id="claude-sonnet-4-6")).insert()
+		doc = frappe.get_doc(_model(provider=self.connection.name, model_id="claude-sonnet-4-6")).insert()
 		doc.save()
 
 		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
+
+	def test_custom_connection_composes_openai_like_model_id(self):
+		connection = frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"title": "Custom Gateway",
+				"provider": "Custom",
+				"base_url": "https://gateway.example.com/v1",
+			}
+		).insert()
+		doc = frappe.get_doc(_model(provider=connection.name, model_id="my-model")).insert()
+		self.assertEqual(doc.model_id, "openai_like/my-model")
 
 	def test_full_model_id_without_provider_still_works(self):
 		doc = frappe.get_doc(_model(model_id="openai/gpt-4o-mini")).insert()
@@ -117,8 +134,6 @@ class TestFlowModelParams(IntegrationTestCase):
 	def test_valid_params_json_accepted(self):
 		doc = frappe.get_doc(_model(params='{"temperature": 0.2, "max_tokens": 500}')).insert()
 
-		import json
-
 		self.assertEqual(json.loads(doc.params), {"temperature": 0.2, "max_tokens": 500})
 
 	def test_invalid_json_rejected(self):
@@ -134,11 +149,45 @@ class TestFlowModelParams(IntegrationTestCase):
 			doc.insert()
 
 	def test_reserved_params_rejected(self):
-		for reserved in ("model", "api_key", "messages", "stream", "tools"):
+		for reserved in ("model", "api_key", "messages", "input", "stream", "tools"):
 			with self.subTest(key=reserved):
 				doc = frappe.get_doc(_model(params=f'{{"{reserved}": "x"}}'))
 				with self.assertRaisesRegex(frappe.ValidationError, "reserved keys"):
 					doc.insert()
+
+	def test_model_request_settings_allow_safe_overrides(self):
+		doc = frappe.get_doc(
+			_model(params='{"extra_headers": {"X-Model": "yes"}, "extra_query": {"version": "2"}}')
+		).insert()
+		self.assertEqual(json.loads(doc.params)["extra_headers"], {"X-Model": "yes"})
+
+	def test_model_request_settings_reject_reserved_nested_keys(self):
+		for params in (
+			'{"extra_headers": {"Authorization": "secret"}}',
+			'{"extra_query": {"api_key": "secret"}}',
+			'{"extra_body": {"messages": []}}',
+		):
+			with self.subTest(params=params):
+				with self.assertRaisesRegex(frappe.ValidationError, "reserved keys"):
+					frappe.get_doc(_model(params=params)).insert()
+
+
+class TestFlowModelConnection(IntegrationTestCase):
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_connection_uses_shared_responses_route(self):
+		doc = frappe.get_doc(_model()).insert()
+
+		with (
+			patch("flow.lib.model.resolve_provider_credentials", return_value={}),
+			patch("litellm.completion") as completion,
+		):
+			result = doc.test_connection()
+
+		self.assertTrue(result["ok"])
+		self.assertEqual(completion.call_args.kwargs["model"], "openai/responses/gpt-4o-mini")
+		self.assertEqual(completion.call_args.kwargs["messages"], [{"role": "user", "content": "ping"}])
 
 
 class TestContextWindow(IntegrationTestCase):

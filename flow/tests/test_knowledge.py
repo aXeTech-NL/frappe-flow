@@ -240,6 +240,38 @@ class TestEmbedder(IntegrationTestCase):
 		with patch("litellm.embedding", return_value=response):
 			self.assertEqual(probe_dimension(self.model.name), 1536)
 
+	def test_embeddings_use_embedding_base_and_ignore_chat_style(self):
+		connection = frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"title": "Embedding Connection",
+				"provider": "openai",
+				"api_key": "sk-provider",
+				"api_style": "Responses",
+				"base_url": "https://generic.example.com/v1",
+				"responses_base_url": "https://responses.example.com/v1",
+				"embedding_base_url": "https://embeddings.example.com/v1",
+				"extra_headers": '{"X-Provider": "yes"}',
+			}
+		).insert()
+		model = frappe.get_doc(
+			{
+				"doctype": "Flow Model",
+				"title": "Linked Embedding Model",
+				"provider": connection.name,
+				"model_id": "text-embedding-3-small",
+				"enabled": 1,
+				"params": '{"extra_headers": {"X-Model": "yes"}}',
+			}
+		).insert()
+		_set_settings(embedding_model=model.name)
+		with patch("litellm.embedding", return_value=_embedding_response([[1.0]])) as mocked:
+			embed_texts(["hello"])
+		kwargs = mocked.call_args.kwargs
+		self.assertEqual(kwargs["model"], "openai/text-embedding-3-small")
+		self.assertEqual(kwargs["api_base"], "https://embeddings.example.com/v1")
+		self.assertEqual(kwargs["extra_headers"], {"X-Provider": "yes", "X-Model": "yes"})
+
 
 class TestKnowledgeSettings(IntegrationTestCase):
 	def setUp(self):

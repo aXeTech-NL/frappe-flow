@@ -11,6 +11,18 @@ from typing import Any
 import frappe
 
 DEFAULT_TIMEOUT = 60
+API_STYLE_PROVIDER_DEFAULT = "Provider Default"
+API_STYLE_AUTO = "Auto"
+API_STYLE_RESPONSES = "Responses"
+API_STYLE_CHAT_COMPLETIONS = "Chat Completions"
+API_STYLES = frozenset(
+	{API_STYLE_PROVIDER_DEFAULT, API_STYLE_AUTO, API_STYLE_RESPONSES, API_STYLE_CHAT_COMPLETIONS}
+)
+REQUEST_SETTING_KEYS = ("extra_headers", "extra_query", "extra_body")
+RESERVED_PARAM_KEYS = frozenset(
+	{"model", "api_key", "api_base", "base_url", "messages", "input", "stream", "tools", "tool_choice"}
+)
+RESERVED_HEADER_KEYS = frozenset({"authorization", "api-key", "x-api-key"})
 
 
 @dataclass
@@ -50,33 +62,56 @@ class Model:
 		base_url: str | None = None,
 		params: dict[str, Any] | None = None,
 		timeout: int = DEFAULT_TIMEOUT,
+		api_style: str | None = None,
 	):
+		connection_name = None
+		model_base_url = base_url
 		if name is not None:
-			if model_id or api_key or base_url or params:
+			if model_id or api_key or base_url or params or api_style is not None:
 				raise ValueError("Pass either a Flow Model doc name or explicit kwargs, not both.")
 			doc = frappe.get_doc("Flow Model", name)
 			if not doc.enabled:
 				raise ValueError(f"Flow Model {name!r} is disabled")
 			model_id = doc.model_id
 			api_key = doc.get_password("api_key", raise_exception=False)
-			base_url = doc.base_url or None
+			model_base_url = doc.base_url or None
 			params = json.loads(doc.params) if doc.params else {}
+			api_style = getattr(doc, "api_style", None) or API_STYLE_AUTO
+			connection_name = getattr(doc, "provider", None) or None
 
 		if not model_id:
 			raise ValueError("model_id is required")
+		api_style = api_style or API_STYLE_AUTO
+		if api_style not in API_STYLES:
+			raise ValueError(f"api_style must be one of {sorted(API_STYLES)}, got {api_style!r}")
 
-		# Fall back to the central Flow Provider store for anything not set on the model itself.
-		provider_creds = resolve_provider_credentials(model_id)
-		api_key = api_key or provider_creds.get("api_key")
-		base_url = base_url or provider_creds.get("base_url")
-		if provider_creds.get("extra_params"):
-			params = {**provider_creds["extra_params"], **(params or {})}
+		# Model settings override the exact linked connection. Legacy unlinked models
+		# resolve only when one enabled connection matches their connector.
+		provider_config = resolve_provider_credentials(model_id, connection_name)
+		api_key = api_key or provider_config.get("api_key")
+		if api_style == API_STYLE_PROVIDER_DEFAULT:
+			api_style = provider_config.get("api_style") or API_STYLE_AUTO
+		provider_params = provider_config.get("extra_params") or {}
+		for key in REQUEST_SETTING_KEYS:
+			if provider_config.get(key):
+				provider_params[key] = provider_config[key]
+		params = _merge_params(provider_params, params or {})
+		_validate_runtime_params(params)
+
+		# A generic/model base marks OpenAI Auto as a proxy. Operation-specific
+		# endpoints are selected only after deciding the effective API operation.
+		routing_base_url = model_base_url or provider_config.get("base_url")
+		routed_model_id = route_model_id(model_id, api_style, routing_base_url)
+		operation = "responses" if "/responses/" in routed_model_id else "chat"
+		operation_base_url = provider_config.get(f"{operation}_base_url")
 
 		self.model_id = model_id
+		self.routed_model_id = routed_model_id
 		self._api_key = api_key or None
-		self.base_url = base_url
-		self.params = params or {}
+		self.base_url = model_base_url or operation_base_url or provider_config.get("base_url")
+		self.params = params
 		self.timeout = timeout
+		self.api_style = api_style
 
 	def chat(
 		self,
@@ -92,8 +127,20 @@ class Model:
 		if isinstance(messages, str):
 			messages = [{"role": "user", "content": messages}]
 
+		kwargs = self.completion_kwargs(messages, tools=tools, stream=stream)
+		if stream:
+			return _consume_stream(litellm.completion(**kwargs))
+		return _normalize(litellm.completion(**kwargs))
+
+	def completion_kwargs(
+		self,
+		messages: list[dict[str, Any]],
+		*,
+		tools: list[dict[str, Any]] | None = None,
+		stream: bool = False,
+	) -> dict[str, Any]:
 		kwargs: dict[str, Any] = {
-			"model": self.model_id,
+			"model": self.routed_model_id,
 			"api_key": self._api_key,
 			"messages": messages,
 			"timeout": self.timeout,
@@ -103,36 +150,120 @@ class Model:
 			kwargs["api_base"] = self.base_url
 		if tools:
 			kwargs["tools"] = tools
-
 		if stream:
 			kwargs["stream"] = True
 			kwargs["stream_options"] = {"include_usage": True}
-			return _consume_stream(litellm.completion(**kwargs))
-
-		return _normalize(litellm.completion(**kwargs))
+		return kwargs
 
 
-def resolve_provider_credentials(model_id: str) -> dict[str, Any]:
-	"""Look up central Flow Provider credentials for a model's provider."""
+def route_model_id(model_id: str, api_style: str | None = None, base_url: str | None = None) -> str:
+	"""Return the LiteLLM model ID for the selected OpenAI API style.
+
+	LiteLLM's completion compatibility layer selects the Responses API when the
+	OpenAI provider-relative model starts with ``responses/``. Other providers,
+	and custom endpoints in Auto mode, retain LiteLLM's default routing.
+	"""
+	api_style = api_style or API_STYLE_AUTO
+	if api_style not in API_STYLES:
+		raise ValueError(f"api_style must be one of {sorted(API_STYLES)}, got {api_style!r}")
+	if api_style == API_STYLE_PROVIDER_DEFAULT:
+		api_style = API_STYLE_AUTO
+
+	connector = next(
+		(prefix for prefix in ("openai", "openai_like") if model_id.startswith(f"{prefix}/")),
+		None,
+	)
+	if not connector:
+		return model_id
+
+	provider_model = model_id.removeprefix(f"{connector}/")
+	is_responses_model = provider_model.startswith("responses/")
+	use_responses = api_style == API_STYLE_RESPONSES or (
+		api_style == API_STYLE_AUTO and connector == "openai" and not base_url
+	)
+
+	if use_responses:
+		# LiteLLM exposes Responses through its OpenAI bridge, including for an
+		# openai_like model with a custom operation endpoint.
+		response_model = provider_model.removeprefix("responses/")
+		return f"openai/responses/{response_model}"
+	if api_style == API_STYLE_CHAT_COMPLETIONS and is_responses_model:
+		return f"{connector}/{provider_model.removeprefix('responses/')}"
+	return model_id
+
+
+def resolve_provider_credentials(model_id: str, connection_name: str | None = None) -> dict[str, Any]:
+	"""Resolve one enabled Flow Provider connection.
+
+	A linked Flow Model always addresses its exact connection. Unlinked legacy
+	models retain implicit lookup only when one enabled connection matches the
+	LiteLLM connector; duplicate matches intentionally return no credentials.
+	"""
+	if connection_name:
+		try:
+			doc = frappe.get_doc("Flow Provider", connection_name)
+		except Exception:
+			return {}
+		return _provider_credentials(doc) if doc.enabled else {}
+
 	try:
 		import litellm
 
 		provider = litellm.get_llm_provider(model_id)[1]
+		from flow.flow.doctype.flow_provider.flow_provider import connector_id
+
+		rows = frappe.get_all("Flow Provider", filters={"enabled": 1}, fields=["name", "provider"])
+		matches = [row.name for row in rows if connector_id(row.provider) == provider]
 	except Exception:
 		return {}
 
-	if not provider or not frappe.db.exists("Flow Provider", provider):
+	if len(matches) != 1:
 		return {}
+	return _provider_credentials(frappe.get_doc("Flow Provider", matches[0]))
 
-	doc = frappe.get_doc("Flow Provider", provider)
-	if not doc.enabled:
-		return {}
 
-	return {
+def _provider_credentials(doc: Any) -> dict[str, Any]:
+	config = {
 		"api_key": doc.get_password("api_key", raise_exception=False) or None,
-		"base_url": doc.base_url or None,
-		"extra_params": json.loads(doc.extra_params) if doc.extra_params else {},
+		"api_style": getattr(doc, "api_style", None) or API_STYLE_AUTO,
+		"base_url": getattr(doc, "base_url", None) or None,
+		"chat_base_url": getattr(doc, "chat_base_url", None) or None,
+		"responses_base_url": getattr(doc, "responses_base_url", None) or None,
+		"embedding_base_url": getattr(doc, "embedding_base_url", None) or None,
+		"extra_params": _json_object(getattr(doc, "extra_params", None)),
 	}
+	for key in REQUEST_SETTING_KEYS:
+		config[key] = _json_object(getattr(doc, key, None))
+	return config
+
+
+def _json_object(value: str | None) -> dict[str, Any]:
+	return json.loads(value) if value else {}
+
+
+def _merge_params(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+	"""Merge model params over provider defaults, preserving nested request settings."""
+	merged = {**defaults, **overrides}
+	for key in REQUEST_SETTING_KEYS:
+		if key in defaults or key in overrides:
+			merged[key] = {**(defaults.get(key) or {}), **(overrides.get(key) or {})}
+	return merged
+
+
+def _validate_runtime_params(params: dict[str, Any]) -> None:
+	conflicting = sorted(RESERVED_PARAM_KEYS.intersection(params))
+	if conflicting:
+		raise ValueError(f"params may not include reserved keys: {', '.join(conflicting)}")
+	for key in REQUEST_SETTING_KEYS:
+		if key not in params:
+			continue
+		if not isinstance(params[key], dict):
+			raise ValueError(f"{key} must be a dict")
+		reserved = RESERVED_HEADER_KEYS if key == "extra_headers" else RESERVED_PARAM_KEYS
+		nested_keys = {str(value).lower() for value in params[key]}
+		conflicting = sorted(reserved.intersection(nested_keys))
+		if conflicting:
+			raise ValueError(f"{key} may not include reserved keys: {', '.join(conflicting)}")
 
 
 def _consume_stream(chunks: Any) -> Generator[str | ToolCallBegin, None, ChatResponse]:

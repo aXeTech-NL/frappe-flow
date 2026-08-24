@@ -12,8 +12,10 @@ from frappe.model.document import Document
 MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_\-]*\/[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
 
 RESERVED_PARAM_KEYS = frozenset(
-	{"model", "api_key", "api_base", "base_url", "messages", "stream", "tools", "tool_choice"}
+	{"model", "api_key", "api_base", "base_url", "messages", "input", "stream", "tools", "tool_choice"}
 )
+RESERVED_HEADER_KEYS = frozenset({"authorization", "api-key", "x-api-key"})
+REQUEST_SETTING_KEYS = ("extra_headers", "extra_query", "extra_body")
 
 
 class FlowModel(Document):
@@ -26,7 +28,7 @@ class FlowModel(Document):
 		from frappe.types import DF
 
 		api_key: DF.Password | None
-		api_style: DF.Literal["Auto", "Chat Completions", "Responses"]
+		api_style: DF.Literal["Auto", "Chat Completions", "Provider Default", "Responses"]
 		base_url: DF.Data | None
 		context_window: DF.Int
 		enabled: DF.Check
@@ -110,6 +112,19 @@ class FlowModel(Document):
 				_("Params may not include reserved keys: {0}.").format(", ".join(conflicting)),
 				title=_("Reserved Params"),
 			)
+		for key in REQUEST_SETTING_KEYS:
+			if key not in parsed:
+				continue
+			if not isinstance(parsed[key], dict):
+				frappe.throw(_("{0} in Params must be a JSON object.").format(key))
+			reserved = RESERVED_HEADER_KEYS if key == "extra_headers" else RESERVED_PARAM_KEYS
+			nested_keys = {str(value).lower() for value in parsed[key]}
+			nested_conflicts = sorted(reserved.intersection(nested_keys))
+			if nested_conflicts:
+				frappe.throw(
+					_("{0} may not include reserved keys: {1}.").format(key, ", ".join(nested_conflicts)),
+					title=_("Reserved Params"),
+				)
 
 	def _resolve_context_window(self):
 		# Always derived from the model — never user input. Keeps the last detected value when
@@ -138,21 +153,11 @@ class FlowModel(Document):
 				title=_("Missing Dependency"),
 			)
 
-		from flow.lib.model import API_STYLE_AUTO, resolve_provider_credentials, route_model_id
+		from flow.lib.model import Model
 
-		provider_creds = resolve_provider_credentials(self.model_id, self.provider)
-		api_key = self.get_password("api_key", raise_exception=False) or provider_creds.get("api_key") or None
-		base_url = self.base_url or provider_creds.get("base_url")
-
-		kwargs = {
-			"model": route_model_id(self.model_id, self.api_style or API_STYLE_AUTO, base_url),
-			"api_key": api_key,
-			"messages": [{"role": "user", "content": "ping"}],
-			"max_tokens": 1,
-			"timeout": 15,
-		}
-		if base_url:
-			kwargs["api_base"] = base_url
+		model = Model(self.name)
+		kwargs = model.completion_kwargs([{"role": "user", "content": "ping"}])
+		kwargs.update(max_tokens=1, timeout=15)
 
 		try:
 			litellm.completion(**kwargs)

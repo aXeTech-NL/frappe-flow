@@ -10,6 +10,7 @@ from frappe import _
 from frappe.model.document import Document
 
 MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_\-]*\/[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
+REMOTE_MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
 
 RESERVED_PARAM_KEYS = frozenset(
 	{"model", "api_key", "api_base", "base_url", "messages", "input", "stream", "tools", "tool_choice"}
@@ -63,29 +64,36 @@ class FlowModel(Document):
 			self.api_key = self.api_key.strip()
 
 	def _apply_provider(self):
-		# The Link identifies a connection document; the stored connector composes
-		# the LiteLLM model ID. Existing provider/model IDs remain idempotent.
-		if not self.provider:
+		# A linked Provider already carries the connector. Keep only the remote model
+		# identifier in this field and compose the LiteLLM prefix at call time.
+		if not self.provider or not self.model_id:
 			return
-		from flow.flow.doctype.flow_provider.flow_provider import connector_id
+		from flow.flow.doctype.flow_provider.flow_provider import connector_id, strip_connector_prefix
 
 		connection = frappe.get_doc("Flow Provider", self.provider)
-		connector = connector_id(connection.provider)
-		model = self.model_id or ""
-		if "/" in model:
-			current_connector, model = model.split("/", 1)
-			if current_connector == connector:
-				return
-		self.model_id = f"{connector}/{model}"
+		self.model_id = strip_connector_prefix(self.model_id, connector_id(connection.provider))
+
+	def _runtime_model_id(self) -> str:
+		if not self.provider:
+			return self.model_id
+		from flow.flow.doctype.flow_provider.flow_provider import compose_model_id, connector_id
+
+		connection = frappe.get_doc("Flow Provider", self.provider)
+		return compose_model_id(self.model_id, connector_id(connection.provider))
 
 	def _validate_model_id(self):
-		if not MODEL_ID_PATTERN.match(self.model_id or ""):
-			frappe.throw(
+		pattern = REMOTE_MODEL_ID_PATTERN if self.provider else MODEL_ID_PATTERN
+		if not pattern.match(self.model_id or ""):
+			message = (
 				_(
-					"Model ID must be in <code>provider/model</code> form (e.g. <code>anthropic/claude-sonnet-4-6</code>). Only lowercase provider names and alphanumerics, dashes, dots, colons or slashes in the model part are allowed."
-				),
-				title=_("Invalid Model ID"),
+					"Enter the model identifier used by the linked Provider (e.g. <code>gpt-4.1</code> or <code>hf.co/organization/model</code>)."
+				)
+				if self.provider
+				else _(
+					"Model ID must be in <code>provider/model</code> form (e.g. <code>anthropic/claude-sonnet-4-6</code>)."
+				)
 			)
+			frappe.throw(message, title=_("Invalid Model ID"))
 
 	def _validate_base_url(self):
 		if not self.base_url:
@@ -129,7 +137,7 @@ class FlowModel(Document):
 	def _resolve_context_window(self):
 		# Always derived from the model — never user input. Keeps the last detected value when
 		# litellm can't resolve the model, and 0 otherwise (callers fall back to a default).
-		self.context_window = _detect_context_window(self.model_id) or self.context_window or 0
+		self.context_window = _detect_context_window(self._runtime_model_id()) or self.context_window or 0
 
 	def _validate_provider_known(self):
 		try:
@@ -137,7 +145,7 @@ class FlowModel(Document):
 		except ImportError:
 			return
 		try:
-			litellm.get_llm_provider(self.model_id)
+			litellm.get_llm_provider(self._runtime_model_id())
 		except Exception as e:
 			frappe.throw(str(e)[:500], title=_("Invalid Model ID"))
 
@@ -185,7 +193,13 @@ def get_provider_models(provider: str | None = None) -> list[str]:
 
 	import litellm
 
-	from flow.flow.doctype.flow_provider.flow_provider import connector_id
+	from flow.flow.doctype.flow_provider.flow_provider import connector_id, strip_connector_prefix
 
 	connection = frappe.get_doc("Flow Provider", provider)
-	return sorted(litellm.models_by_provider.get(connector_id(connection.provider), set()))
+	connector = connector_id(connection.provider)
+	return sorted(
+		{
+			strip_connector_prefix(model_id, connector)
+			for model_id in litellm.models_by_provider.get(connector, set())
+		}
+	)

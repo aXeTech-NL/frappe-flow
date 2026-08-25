@@ -8,3 +8,4 @@ flow.patches.rename_ai_to_flow
 flow.patches.remove_frontend_tooling
 flow.patches.grant_flow_role
 flow.patches.backfill_flow_provider_titles
+flow.patches.normalize_linked_provider_model_ids

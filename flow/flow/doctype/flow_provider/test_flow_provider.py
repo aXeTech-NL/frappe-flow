@@ -78,7 +78,7 @@ class TestFlowProviderValidation(IntegrationTestCase):
 			_provider(provider="Custom", responses_base_url="https://custom.example.com/v1")
 		).insert()
 		self.assertEqual(doc.provider, "custom")
-		self.assertEqual(connector_id(doc.provider), "openai_like")
+		self.assertEqual(connector_id(doc.provider), "openai")
 
 	def test_invalid_base_url_rejected(self):
 		doc = frappe.get_doc(_provider(base_url="not-a-url"))

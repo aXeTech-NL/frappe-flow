@@ -82,6 +82,31 @@ class TestModel(UnitTestCase):
 		self.assertEqual(m.params, {"temperature": 0.3})
 		self.assertEqual(m.api_style, "Auto")
 
+	@patch("flow.lib.model.resolve_provider_credentials")
+	@patch("frappe.get_doc")
+	def test_linked_model_keeps_remote_id_and_routes_with_connector(self, mock_get_doc, credentials):
+		mock_get_doc.return_value = SimpleNamespace(
+			enabled=1,
+			model_id="hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q5_K_XL",
+			provider="OpenWebUI",
+			api_style="Provider Default",
+			base_url=None,
+			params=None,
+			get_password=lambda field, raise_exception=False: None,
+		)
+		credentials.return_value = {
+			"connector": "openai",
+			"api_style": "Chat Completions",
+			"base_url": "https://openwebui.example.com/v1",
+		}
+
+		model = Model("OpenWebUI Qwen")
+		kwargs = model.completion_kwargs([{"role": "user", "content": "hi"}])
+
+		self.assertEqual(model.model_id, "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q5_K_XL")
+		self.assertEqual(kwargs["model"], "openai/hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q5_K_XL")
+		self.assertEqual(kwargs["api_base"], "https://openwebui.example.com/v1")
+
 	@patch("frappe.get_doc")
 	def test_init_rejects_disabled_doc(self, mock_get_doc):
 		mock_get_doc.return_value = SimpleNamespace(
@@ -282,11 +307,14 @@ class TestModel(UnitTestCase):
 		)
 		self.assertEqual(
 			route_model_id("openai_like/responses/custom-model", API_STYLE_CHAT_COMPLETIONS),
-			"openai_like/custom-model",
+			"openai/custom-model",
 		)
 		self.assertEqual(
-			route_model_id("openai_like/custom-model"),
-			"openai_like/custom-model",
+			route_model_id(
+				"openai_like/hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q5_K_XL",
+				base_url="https://openwebui.example.com/v1",
+			),
+			"openai/hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q5_K_XL",
 		)
 
 	@patch("flow.lib.model.resolve_provider_credentials")

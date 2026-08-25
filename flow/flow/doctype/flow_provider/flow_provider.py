@@ -30,22 +30,53 @@ RESERVED_REQUEST_KEYS = frozenset(
 )
 RESERVED_HEADER_KEYS = frozenset({"authorization", "api-key", "x-api-key"})
 CUSTOM_CONNECTOR = "custom"
-OPENAI_LIKE_CONNECTOR = "openai_like"
+OPENAI_CONNECTOR = "openai"
+LEGACY_OPENAI_LIKE_CONNECTOR = "openai_like"
 API_STYLES = frozenset({"Auto", "Responses", "Chat Completions"})
 
 
 def connector_id(value: str | None) -> str:
-	"""Return the LiteLLM connector represented by a stored Connector value."""
+	"""Return the LiteLLM connector represented by a stored Connector value.
+
+	Custom connections speak the OpenAI protocol at a user-supplied Base URL.
+	LiteLLM 1.83's generic ``openai_like`` slug is not mapped for chat calls.
+	"""
 	value = (value or "").strip().lower()
-	return OPENAI_LIKE_CONNECTOR if value == CUSTOM_CONNECTOR else value
+	return OPENAI_CONNECTOR if value == CUSTOM_CONNECTOR else value
 
 
-def known_connectors() -> list[str]:
+def strip_connector_prefix(model_id: str, connector: str) -> str:
+	"""Return the provider-relative model ID shown and stored by Flow.
+
+	Linked Flow Models historically stored the internal LiteLLM connector prefix.
+	The Provider link now carries that routing information, so remove only the
+	expected connector (plus v16.3.0's legacy Custom prefix).
+	"""
+	prefixes = [connector]
+	if connector == OPENAI_CONNECTOR:
+		prefixes.append(LEGACY_OPENAI_LIKE_CONNECTOR)
+	for prefix in prefixes:
+		if model_id.startswith(f"{prefix}/"):
+			return model_id.removeprefix(f"{prefix}/")
+	return model_id
+
+
+def compose_model_id(model_id: str, connector: str) -> str:
+	"""Build the internal LiteLLM ID without changing the remote model name."""
+	return f"{connector}/{strip_connector_prefix(model_id, connector)}"
+
+
+def connector_ids() -> set[str]:
+	"""Known LiteLLM connector prefixes, including the legacy Custom prefix."""
 	try:
 		import litellm
 	except ImportError:
-		return ["Custom"]
-	return ["Custom", *sorted({provider.value for provider in litellm.provider_list})]
+		return {OPENAI_CONNECTOR, LEGACY_OPENAI_LIKE_CONNECTOR}
+	return {provider.value for provider in litellm.provider_list} | {LEGACY_OPENAI_LIKE_CONNECTOR}
+
+
+def known_connectors() -> list[str]:
+	return ["Custom", *sorted(connector_ids() - {LEGACY_OPENAI_LIKE_CONNECTOR})]
 
 
 def parse_json_object(value: str | None, label: str) -> dict:

@@ -68,25 +68,25 @@ class TestFlowModelProvider(IntegrationTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 
-	def test_linked_provider_composes_model_id_from_connector(self):
+	def test_linked_provider_stores_only_remote_model_id(self):
 		doc = frappe.get_doc(_model(provider=self.connection.name, model_id="claude-sonnet-4-6")).insert()
 
-		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
+		self.assertEqual(doc.model_id, "claude-sonnet-4-6")
 
-	def test_compose_is_idempotent_for_prefixed_model_id(self):
+	def test_linked_provider_strips_historical_connector_prefix(self):
 		doc = frappe.get_doc(
 			_model(provider=self.connection.name, model_id="anthropic/claude-sonnet-4-6")
 		).insert()
 
-		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
+		self.assertEqual(doc.model_id, "claude-sonnet-4-6")
 
-	def test_resave_does_not_double_prefix(self):
+	def test_resave_keeps_remote_model_id(self):
 		doc = frappe.get_doc(_model(provider=self.connection.name, model_id="claude-sonnet-4-6")).insert()
 		doc.save()
 
-		self.assertEqual(doc.model_id, "anthropic/claude-sonnet-4-6")
+		self.assertEqual(doc.model_id, "claude-sonnet-4-6")
 
-	def test_custom_connection_composes_openai_like_model_id(self):
+	def test_custom_connection_uses_openai_and_preserves_nested_model_path(self):
 		connection = frappe.get_doc(
 			{
 				"doctype": "Flow Provider",
@@ -95,8 +95,66 @@ class TestFlowModelProvider(IntegrationTestCase):
 				"base_url": "https://gateway.example.com/v1",
 			}
 		).insert()
-		doc = frappe.get_doc(_model(provider=connection.name, model_id="my-model")).insert()
-		self.assertEqual(doc.model_id, "openai_like/my-model")
+		doc = frappe.get_doc(
+			_model(provider=connection.name, model_id="hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q5_K_XL")
+		).insert()
+		self.assertEqual(doc.model_id, "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q5_K_XL")
+
+	def test_custom_connection_rewrites_legacy_openai_like_prefix(self):
+		connection = frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"title": "Legacy Custom Gateway",
+				"provider": "Custom",
+				"base_url": "https://gateway.example.com/v1",
+			}
+		).insert()
+		doc = frappe.get_doc(
+			_model(provider=connection.name, model_id="openai_like/hf.co/unsloth/model")
+		).insert()
+		self.assertEqual(doc.model_id, "hf.co/unsloth/model")
+
+	def test_patch_normalizes_all_linked_model_ids_idempotently(self):
+		from flow.patches.normalize_linked_provider_model_ids import execute
+
+		connection = frappe.get_doc(
+			{
+				"doctype": "Flow Provider",
+				"title": "Migrated Custom Gateway",
+				"provider": "Custom",
+				"base_url": "https://gateway.example.com/v1",
+			}
+		).insert()
+		doc = frappe.get_doc(_model(provider=connection.name, model_id="hf.co/unsloth/model")).insert()
+		anthropic = frappe.get_doc(
+			_model(provider=self.connection.name, model_id="claude-sonnet-4-6", title="Migrated Anthropic")
+		).insert()
+		frappe.db.set_value(
+			"Flow Model",
+			doc.name,
+			"model_id",
+			"openai_like/hf.co/unsloth/model",
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"Flow Model",
+			anthropic.name,
+			"model_id",
+			"anthropic/claude-sonnet-4-6",
+			update_modified=False,
+		)
+
+		execute()
+		execute()
+
+		self.assertEqual(
+			frappe.db.get_value("Flow Model", doc.name, "model_id"),
+			"hf.co/unsloth/model",
+		)
+		self.assertEqual(
+			frappe.db.get_value("Flow Model", anthropic.name, "model_id"),
+			"claude-sonnet-4-6",
+		)
 
 	def test_full_model_id_without_provider_still_works(self):
 		doc = frappe.get_doc(_model(model_id="openai/gpt-4o-mini")).insert()

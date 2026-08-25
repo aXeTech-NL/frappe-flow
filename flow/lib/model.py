@@ -100,8 +100,13 @@ class Model:
 
 		# A generic/model base marks OpenAI Auto as a proxy. Operation-specific
 		# endpoints are selected only after deciding the effective API operation.
+		runtime_model_id = model_id
+		if connection_name and provider_config.get("connector"):
+			from flow.flow.doctype.flow_provider.flow_provider import compose_model_id
+
+			runtime_model_id = compose_model_id(model_id, provider_config["connector"])
 		routing_base_url = model_base_url or provider_config.get("base_url")
-		routed_model_id = route_model_id(model_id, api_style, routing_base_url)
+		routed_model_id = route_model_id(runtime_model_id, api_style, routing_base_url)
 		operation = "responses" if "/responses/" in routed_model_id else "chat"
 		operation_base_url = provider_config.get(f"{operation}_base_url")
 
@@ -177,14 +182,19 @@ def route_model_id(model_id: str, api_style: str | None = None, base_url: str | 
 		return model_id
 
 	provider_model = model_id.removeprefix(f"{connector}/")
+	# v16.3.0 stored Custom connections with openai_like, but LiteLLM 1.83
+	# exposes that generic slug for embeddings only. OpenAI-compatible chat uses
+	# the normal OpenAI connector plus the custom api_base.
+	connector = "openai"
+	model_id = f"{connector}/{provider_model}"
 	is_responses_model = provider_model.startswith("responses/")
 	use_responses = api_style == API_STYLE_RESPONSES or (
 		api_style == API_STYLE_AUTO and connector == "openai" and not base_url
 	)
 
 	if use_responses:
-		# LiteLLM exposes Responses through its OpenAI bridge, including for an
-		# openai_like model with a custom operation endpoint.
+		# LiteLLM exposes Responses through its OpenAI bridge, including for a
+		# Custom OpenAI-compatible connection with an operation-specific endpoint.
 		response_model = provider_model.removeprefix("responses/")
 		return f"openai/responses/{response_model}"
 	if api_style == API_STYLE_CHAT_COMPLETIONS and is_responses_model:
@@ -223,7 +233,10 @@ def resolve_provider_credentials(model_id: str, connection_name: str | None = No
 
 
 def _provider_credentials(doc: Any) -> dict[str, Any]:
+	from flow.flow.doctype.flow_provider.flow_provider import connector_id
+
 	config = {
+		"connector": connector_id(getattr(doc, "provider", None)),
 		"api_key": doc.get_password("api_key", raise_exception=False) or None,
 		"api_style": getattr(doc, "api_style", None) or API_STYLE_AUTO,
 		"base_url": getattr(doc, "base_url", None) or None,

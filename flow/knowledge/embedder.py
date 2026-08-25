@@ -56,6 +56,11 @@ def _model_config(model: str) -> dict[str, Any]:
 		frappe.throw(_("Flow Model {0} is disabled.").format(model), title=_("Model Disabled"))
 
 	provider_config = resolve_provider_credentials(doc.model_id, doc.provider)
+	runtime_model_id = doc.model_id
+	if doc.provider and provider_config.get("connector"):
+		from flow.flow.doctype.flow_provider.flow_provider import compose_model_id
+
+		runtime_model_id = compose_model_id(doc.model_id, provider_config["connector"])
 	provider_params = provider_config.get("extra_params") or {}
 	for key in REQUEST_SETTING_KEYS:
 		if provider_config.get(key):
@@ -63,7 +68,7 @@ def _model_config(model: str) -> dict[str, Any]:
 	model_params = json.loads(doc.params) if doc.params else {}
 	config: dict[str, Any] = {
 		**_merge_params(provider_params, model_params),
-		"model": doc.model_id,
+		"model": runtime_model_id,
 		"api_key": doc.get_password("api_key", raise_exception=False) or provider_config.get("api_key") or "",
 	}
 	base_url = doc.base_url or provider_config.get("embedding_base_url") or provider_config.get("base_url")

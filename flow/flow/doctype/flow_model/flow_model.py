@@ -11,6 +11,7 @@ from frappe.model.document import Document
 
 MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_\-]*\/[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
 REMOTE_MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-:.\/]*$")
+CONNECTION_TEST_MAX_TOKENS = 100  # Safely above provider minimums for connection probes.
 
 RESERVED_PARAM_KEYS = frozenset(
 	{"model", "api_key", "api_base", "base_url", "messages", "input", "stream", "tools", "tool_choice"}
@@ -165,7 +166,7 @@ class FlowModel(Document):
 
 		model = Model(self.name)
 		kwargs = model.completion_kwargs([{"role": "user", "content": "ping"}])
-		kwargs.update(max_tokens=1, timeout=15)
+		kwargs.update(max_tokens=CONNECTION_TEST_MAX_TOKENS, timeout=15)
 
 		try:
 			litellm.completion(**kwargs)

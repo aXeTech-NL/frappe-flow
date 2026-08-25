@@ -8,7 +8,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from flow.flow.doctype.flow_model.flow_model import _detect_context_window
+from flow.flow.doctype.flow_model.flow_model import CONNECTION_TEST_MAX_TOKENS, _detect_context_window
 
 
 def _model(**overrides: Any) -> dict:
@@ -246,6 +246,7 @@ class TestFlowModelConnection(IntegrationTestCase):
 		self.assertTrue(result["ok"])
 		self.assertEqual(completion.call_args.kwargs["model"], "openai/responses/gpt-4o-mini")
 		self.assertEqual(completion.call_args.kwargs["messages"], [{"role": "user", "content": "ping"}])
+		self.assertEqual(completion.call_args.kwargs["max_tokens"], CONNECTION_TEST_MAX_TOKENS)
 
 
 class TestContextWindow(IntegrationTestCase):

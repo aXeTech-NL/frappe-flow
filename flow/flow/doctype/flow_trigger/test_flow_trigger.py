@@ -200,11 +200,11 @@ class TestFlowTriggerFiring(IntegrationTestCase):
 
 	# ── dispatch(): the doc_events hook that enqueues matching triggers ────────
 
-	def test_dispatch_enqueues_matching_trigger(self):
+	def test_dispatch_registers_matching_trigger(self):
 		trig = frappe.get_doc(_trigger(self.agent.name)).insert()
 		todo = frappe.get_doc({"doctype": "ToDo", "description": "dispatch probe"}).insert()
 
-		with patch.object(frappe, "enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			triggers.dispatch(todo, "after_insert")
 
 		enqueue.assert_called_once()
@@ -214,20 +214,20 @@ class TestFlowTriggerFiring(IntegrationTestCase):
 	def test_dispatch_ignores_non_matching_event(self):
 		frappe.get_doc(_trigger(self.agent.name, doc_event="after_insert")).insert()
 		todo = frappe.get_doc({"doctype": "ToDo", "description": "x"}).insert()
-		with patch.object(frappe, "enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			triggers.dispatch(todo, "on_trash")
 		enqueue.assert_not_called()
 
 	def test_dispatch_skips_ai_internal_doctypes(self):
 		frappe.get_doc(_trigger(self.agent.name)).insert()
-		with patch.object(frappe, "enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			triggers.dispatch(self.agent, "on_update")
 		enqueue.assert_not_called()
 
 	def test_dispatch_respects_false_condition(self):
 		frappe.get_doc(_trigger(self.agent.name, condition="doc.status == 'Cancelled'")).insert()
 		todo = frappe.get_doc({"doctype": "ToDo", "description": "open"}).insert()
-		with patch.object(frappe, "enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			triggers.dispatch(todo, "after_insert")
 		enqueue.assert_not_called()
 
@@ -250,7 +250,7 @@ class TestFlowTriggerFiring(IntegrationTestCase):
 		two_hours_ago = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-2)
 		frappe.db.set_value("Flow Trigger", trig.name, "last_fired_at", two_hours_ago, update_modified=False)
 
-		with patch.object(frappe, "enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			triggers.dispatch_scheduled()
 
 		fired = [c for c in enqueue.call_args_list if c.kwargs.get("trigger") == trig.name]
@@ -269,7 +269,7 @@ class TestFlowTriggerFiring(IntegrationTestCase):
 			update_modified=False,
 		)
 
-		with patch.object(frappe, "enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			triggers.dispatch_scheduled()
 
 		fired = [c for c in enqueue.call_args_list if c.kwargs.get("trigger") == trig.name]
@@ -282,7 +282,7 @@ class TestFlowTriggerFiring(IntegrationTestCase):
 			"Flow Trigger", trig.name, "last_fired_at", frappe.utils.now_datetime(), update_modified=False
 		)
 
-		with patch.object(frappe, "enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			triggers.dispatch_scheduled()
 
 		fired = [c for c in enqueue.call_args_list if c.kwargs.get("trigger") == trig.name]

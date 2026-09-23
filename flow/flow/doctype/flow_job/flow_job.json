@@ -1,0 +1,33 @@
+{
+ "doctype": "DocType",
+ "name": "Flow Job",
+ "module": "Flow",
+ "autoname": "prompt",
+ "engine": "InnoDB",
+ "field_order": ["job_type", "status", "run_as", "reference_doctype", "reference_name", "flow_run", "attempts", "max_attempts", "next_attempt_at", "started_at", "finished_at", "error", "result", "payload", "fingerprint", "reservation", "rq_job_id", "reserved_at", "timeout"],
+ "fields": [
+  {"fieldname": "job_type", "fieldtype": "Select", "label": "Job Type", "options": "Decision\nAgent\nTrigger", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1, "read_only": 1},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Pending\nQueued\nRunning\nPaused\nCompleted\nFailed\nCancelled", "default": "Pending", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1, "read_only": 1},
+  {"fieldname": "run_as", "fieldtype": "Link", "label": "Run As", "options": "User", "reqd": 1, "in_list_view": 1, "read_only": 1},
+  {"fieldname": "reference_doctype", "fieldtype": "Link", "label": "Reference DocType", "options": "DocType", "read_only": 1},
+  {"fieldname": "reference_name", "fieldtype": "Dynamic Link", "label": "Reference Document", "options": "reference_doctype", "read_only": 1},
+  {"fieldname": "flow_run", "fieldtype": "Link", "label": "Flow Run", "options": "Flow Run", "read_only": 1},
+  {"fieldname": "attempts", "fieldtype": "Int", "label": "Attempts", "default": "0", "read_only": 1},
+  {"fieldname": "max_attempts", "fieldtype": "Int", "label": "Maximum Attempts", "read_only": 1},
+  {"fieldname": "next_attempt_at", "fieldtype": "Datetime", "label": "Next Attempt At", "read_only": 1},
+  {"fieldname": "started_at", "fieldtype": "Datetime", "label": "Started At", "read_only": 1},
+  {"fieldname": "finished_at", "fieldtype": "Datetime", "label": "Finished At", "read_only": 1},
+  {"fieldname": "error", "fieldtype": "Small Text", "label": "Error", "read_only": 1},
+  {"fieldname": "result", "fieldtype": "JSON", "label": "Decision Result", "read_only": 1},
+  {"fieldname": "payload", "fieldtype": "JSON", "label": "Input", "read_only": 1, "description": "Persisted input may contain application data. Access is restricted; retention is configured in Flow Settings."},
+  {"fieldname": "fingerprint", "fieldtype": "Data", "label": "Input Fingerprint", "read_only": 1, "hidden": 1},
+  {"fieldname": "reservation", "fieldtype": "Data", "label": "Reservation", "read_only": 1, "hidden": 1},
+  {"fieldname": "rq_job_id", "fieldtype": "Data", "label": "RQ Job ID", "read_only": 1, "hidden": 1},
+  {"fieldname": "reserved_at", "fieldtype": "Datetime", "label": "Reserved At", "read_only": 1, "hidden": 1},
+  {"fieldname": "timeout", "fieldtype": "Int", "label": "Execution Timeout", "read_only": 1, "hidden": 1}
+ ],
+ "permissions": [{"role": "System Manager", "read": 1, "report": 1}],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "search_fields": "status,job_type,reference_name"
+}

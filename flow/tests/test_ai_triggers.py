@@ -81,10 +81,10 @@ class TestDispatch(IntegrationTestCase):
 	def tearDown(self):
 		frappe.db.rollback()
 
-	def test_dispatch_enqueues_matching_trigger(self):
+	def test_dispatch_registers_matching_trigger(self):
 		doc = _Bag(doctype="ToDo", name="todo-x")
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "after_insert")
 
 		enqueue.assert_called_once()
@@ -92,12 +92,12 @@ class TestDispatch(IntegrationTestCase):
 		self.assertEqual(kwargs["trigger"], self.trigger.name)
 		self.assertEqual(kwargs["target_doctype"], "ToDo")
 		self.assertEqual(kwargs["target_name"], "todo-x")
-		self.assertTrue(kwargs["enqueue_after_commit"])
+		self.assertEqual(kwargs["event"], "after_insert")
 
 	def test_dispatch_ignores_unknown_method(self):
 		doc = _Bag(doctype="ToDo", name="todo-x")
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "before_save")
 
 		enqueue.assert_not_called()
@@ -105,7 +105,7 @@ class TestDispatch(IntegrationTestCase):
 	def test_dispatch_ignores_ai_doctypes(self):
 		doc = _Bag(doctype="Flow Run", name="any")
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "after_insert")
 
 		enqueue.assert_not_called()
@@ -113,7 +113,7 @@ class TestDispatch(IntegrationTestCase):
 	def test_dispatch_skips_when_event_mismatched(self):
 		doc = _Bag(doctype="ToDo", name="todo-x")
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "on_submit")
 
 		enqueue.assert_not_called()
@@ -121,7 +121,7 @@ class TestDispatch(IntegrationTestCase):
 	def test_dispatch_skips_when_doctype_mismatched(self):
 		doc = _Bag(doctype="User", name="someone@example.com")
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "after_insert")
 
 		enqueue.assert_not_called()
@@ -134,11 +134,11 @@ class TestDispatch(IntegrationTestCase):
 			{"doctype": "ToDo", "description": "closed one", "status": "Closed"}
 		).insert()
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(open_doc, "after_insert")
 		enqueue.assert_not_called()
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(closed_doc, "after_insert")
 		enqueue.assert_called_once()
 
@@ -152,11 +152,11 @@ class TestDispatch(IntegrationTestCase):
 			{"doctype": "ToDo", "description": "closed one", "status": "Closed"}
 		).insert()
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(open_doc, "after_insert")
 		enqueue.assert_not_called()
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(closed_doc, "after_insert")
 		enqueue.assert_called_once()
 
@@ -175,7 +175,7 @@ class TestDispatch(IntegrationTestCase):
 		self.trigger.save()
 		doc = frappe.get_doc({"doctype": "ToDo", "description": "run-as cond"}).insert()
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "after_insert")
 
 		enqueue.assert_called_once()
@@ -186,7 +186,7 @@ class TestDispatch(IntegrationTestCase):
 		self.trigger.save()
 		doc = frappe.get_doc({"doctype": "ToDo", "description": "boom"}).insert()
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "after_insert")
 
 		enqueue.assert_not_called()
@@ -201,7 +201,7 @@ class TestDispatch(IntegrationTestCase):
 		self.trigger.save()
 		doc = _Bag(doctype="ToDo", name="todo-x")
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch(doc, "after_insert")
 
 		enqueue.assert_not_called()
@@ -234,7 +234,7 @@ class TestDispatchScheduled(IntegrationTestCase):
 		past = frappe.utils.now_datetime() - timedelta(minutes=5)
 		frappe.db.set_value("Flow Trigger", self.trigger.name, "last_fired_at", past, update_modified=False)
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch_scheduled()
 
 		enqueue.assert_called_once()
@@ -244,7 +244,7 @@ class TestDispatchScheduled(IntegrationTestCase):
 		future = frappe.utils.now_datetime() + timedelta(minutes=5)
 		frappe.db.set_value("Flow Trigger", self.trigger.name, "last_fired_at", future, update_modified=False)
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch_scheduled()
 
 		enqueue.assert_not_called()
@@ -253,7 +253,7 @@ class TestDispatchScheduled(IntegrationTestCase):
 		past = frappe.utils.now_datetime() - timedelta(minutes=5)
 		frappe.db.set_value("Flow Trigger", self.trigger.name, "last_fired_at", past, update_modified=False)
 
-		with patch("frappe.enqueue"):
+		with patch("flow.jobs.submit_trigger"):
 			dispatch_scheduled()
 
 		updated = frappe.db.get_value("Flow Trigger", self.trigger.name, "last_fired_at")
@@ -264,7 +264,7 @@ class TestDispatchScheduled(IntegrationTestCase):
 		past = frappe.utils.now_datetime() - timedelta(minutes=5)
 		frappe.db.set_value("Flow Trigger", self.trigger.name, "last_fired_at", past, update_modified=False)
 
-		with patch("frappe.enqueue") as enqueue:
+		with patch("flow.jobs.submit_trigger") as enqueue:
 			dispatch_scheduled()
 
 		enqueue.assert_not_called()

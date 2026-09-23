@@ -2,6 +2,6 @@
 
 from flow.decisions.client import DecisionError, SystemOneClient
 from flow.decisions.schema import choice, noul, score
-from flow.decisions.service import evaluate
+from flow.decisions.service import evaluate, submit
 
-__all__ = ["DecisionError", "SystemOneClient", "choice", "evaluate", "noul", "score"]
+__all__ = ["DecisionError", "SystemOneClient", "choice", "evaluate", "noul", "score", "submit"]

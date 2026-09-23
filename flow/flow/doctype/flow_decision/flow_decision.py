@@ -30,6 +30,6 @@ class FlowDecision(Document):
 		"""Evaluate the saved definition with the current user's permissions."""
 		from flow.decisions import evaluate
 
-		if self.is_new():
+		if self.is_new() or not self.name:
 			frappe.throw(_("Save the decision before evaluating it."))
 		return evaluate(self.name, state=state)

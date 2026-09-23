@@ -15,31 +15,35 @@ DOC_EVENTS = frozenset({"after_insert", "on_update", "on_submit", "on_cancel", "
 
 
 def dispatch(doc: Document, method: str | None = None) -> None:
-	"""doc_events hook: enqueue any matching DocType Event triggers."""
+	"""doc_events hook: register durable work in the document's transaction."""
 	if method not in DOC_EVENTS:
 		return
-	if doc.doctype in {"Flow Run", "Flow Trigger", "Flow Agent", "Flow Tool", "Flow Model"}:
+	if doc.doctype.startswith("Flow "):
 		return
 	if frappe.flags.in_install or frappe.flags.in_migrate or frappe.flags.in_install_db:
 		return
+
+	from flow.jobs import submit_trigger
 
 	triggers = _doctype_triggers(doc.doctype, method)
 
 	for trigger in triggers:
 		if trigger.condition and not _passes_condition(trigger, doc):
 			continue
-		frappe.enqueue(
-			"flow.triggers.fire",
-			enqueue_after_commit=True,
+		submit_trigger(
 			trigger=trigger.name,
 			target_doctype=doc.doctype,
 			target_name=doc.name,
+			event=method,
+			version=getattr(doc, "modified", None) or getattr(doc, "creation", None),
 		)
 
 
 def dispatch_scheduled() -> None:
 	"""Scheduler hook: fire any Scheduled triggers whose cron is due."""
 	from croniter import CroniterBadCronError, croniter
+
+	from flow.jobs import submit_trigger
 
 	now = frappe.utils.now_datetime()
 	triggers = frappe.get_all(
@@ -56,14 +60,16 @@ def dispatch_scheduled() -> None:
 			frappe.log_error(title=f"Flow Trigger cron parse failed: {t.name}")
 			continue
 		if nxt <= now:
+			submit_trigger(trigger=t.name, event="Scheduled", version=nxt)
 			frappe.db.set_value("Flow Trigger", t.name, "last_fired_at", now, update_modified=False)
-			frappe.enqueue("flow.triggers.fire", trigger=t.name)
 
 
 def fire(
 	trigger: str,
 	target_doctype: str | None = None,
 	target_name: str | None = None,
+	*,
+	expected_run_as: str | None = None,
 ) -> str | None:
 	"""Worker: render the prompt and run the agent. Returns the Flow Run name, or None if skipped."""
 	t = frappe.get_doc("Flow Trigger", trigger)
@@ -72,7 +78,12 @@ def fire(
 
 	# A trigger runs as its configured `run_as` user (falling back to the owner)
 	original_user = frappe.session.user
-	frappe.set_user(t.run_as or t.owner)
+	identity = t.run_as or t.owner
+	if expected_run_as is not None and identity != expected_run_as:
+		raise frappe.PermissionError("Trigger execution identity changed after job registration.")
+	if identity == "Guest" or not frappe.db.get_value("User", identity, "enabled"):
+		raise frappe.PermissionError("Trigger execution user is disabled.")
+	frappe.set_user(identity)
 	try:
 		doc = None
 		if target_doctype and target_name:
@@ -80,11 +91,13 @@ def fire(
 				doc = frappe.get_doc(target_doctype, target_name)
 			except frappe.DoesNotExistError:
 				return None
+			doc.check_permission("read")
 			if t.condition and not _eval_condition(t.condition, doc):
 				return None
 
 		prompt = frappe.render_template(t.prompt_template, {"doc": doc, "now": frappe.utils.now_datetime()})
 		agent_doc = frappe.get_doc("Flow Agent", t.agent)
+		agent_doc.check_permission("read")
 		run = agent_doc.run(
 			prompt,
 			source="Trigger",

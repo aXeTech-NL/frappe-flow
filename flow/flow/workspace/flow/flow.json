@@ -115,7 +115,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Configuration",
-   "link_count": 5,
+   "link_count": 7,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -166,6 +166,26 @@
    "label": "Flow Decision Provider",
    "link_count": 0,
    "link_to": "Flow Decision Provider",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Flow Job",
+   "link_count": 0,
+   "link_to": "Flow Job",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Flow Settings",
+   "link_count": 0,
+   "link_to": "Flow Settings",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

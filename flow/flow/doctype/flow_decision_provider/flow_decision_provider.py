@@ -23,7 +23,7 @@ class FlowDecisionProvider(Document):
 	@frappe.whitelist()
 	def test_connection(self):
 		# Resolve persisted settings: submitted document fields must not override endpoint/credentials.
-		if self.is_new():
+		if self.is_new() or not self.name:
 			frappe.throw(_("Save the provider before testing the connection."))
 		saved = frappe.get_doc("Flow Decision Provider", self.name)
 		saved.check_permission("write")

@@ -104,6 +104,27 @@ Plain dictionaries work too; helpers are optional. Each evaluation requires at l
 
 Do not combine a saved decision name with inline questions, provider, or model overrides. A saved definition delegates only its configured questions and connection.
 
+## Background evaluation
+
+For bulk processing, use `submit` instead of `evaluate`:
+
+```python
+from flow.decisions import submit
+from flow.jobs import get_job
+
+job_name = submit(
+    "ticket_triage",
+    state={"subject": "I was charged twice"},
+    idempotency_key="ticket-0001:triage:v1",
+)
+# Inspect in a later request after the surrounding transaction has committed.
+job = get_job(job_name)
+```
+
+`submit` accepts the same saved-definition or inline arguments, plus an optional idempotency key. It stores a **Flow Job** in the current transaction without contacting Redis or the provider. Workers execute it under the submitting user's identity and recheck access. Questions/provider configuration are resolved again at execution. The decision result is available in `job["result"]` after completion.
+
+Unlike synchronous `evaluate`, this API **persists state and results** until job retention removes them. Keys are scoped to execution user and job type; same key/different input is rejected, and key reuse protection expires when the job is removed. Configure **Flow Settings**, the scheduler and the registered custom-queue worker first. See [Background jobs](background-jobs.md) for deployment, retry policy, permissions and cleanup.
+
 ## Results and failure handling
 
 Results retain the provider's JSON envelope: `model`, `answers`, optional `usage`, and any additional provider metadata. Every question must have exactly one answer with the matching type:
@@ -128,7 +149,7 @@ except DecisionError as exc:
     raise
 ```
 
-Invalid caller input raises `ValueError`; normal Frappe missing-document and permission exceptions are not hidden. Network/provider errors have safe messages without echoed request data, provider error bodies, URLs, or credentials. Responses are limited to 4 MiB. There are **no automatic retries**: callers own retry limits and backoff, including 429/529 handling, and should account for duplicate billing after an uncertain timeout.
+Invalid caller input raises `ValueError`; normal Frappe missing-document and permission exceptions are not hidden. Network/provider errors have safe messages without echoed request data, provider error bodies, URLs, or credentials. Responses are limited to 4 MiB. Synchronous `evaluate` has **no automatic retries**: callers own retry limits and backoff, including 429/529 handling. Background `submit` uses Flow Settings' bounded retries for transient decision failures. Either way, account for duplicate billing after an uncertain timeout.
 
 Probabilities/confidence are model outputs, not authorization or guarantees of correctness. Your app owns thresholds, language/domain evaluation, human review and all side effects. An AI result must never bypass document permissions, workflow validation or explicit approval requirements. Evaluate provider quality on representative data before automating consequential actions.
 
@@ -138,7 +159,7 @@ Both configuration DocTypes default to System Manager access. Configuration auth
 
 Inline calls require read access to **Flow Decision Provider**, so they are intended for trusted roles/server jobs. Guest users are rejected. `evaluate` and the decision document's `evaluate` method are **not whitelisted HTTP endpoints**. A consuming app can expose its own purpose-specific endpoint with its own permission and input controls. There is no unrestricted generic public REST API.
 
-Flow does not automatically load documents, save decision inputs/results, or attach them to chat history. The configured service receives the supplied state/questions and follows its own retention policy. Avoid sending whole documents or secrets unnecessarily. Apps can add their own audit records or background jobs; those policies are not imposed by this generic layer.
+Synchronous `evaluate` does not automatically load documents, save decision inputs/results, or attach them to chat history. Background `submit` explicitly stores its input/result in Flow Job, with the configured retention policy. The configured service receives the supplied state/questions and follows its own retention policy. Avoid sending whole documents or secrets unnecessarily. Apps can add their own domain audit records; Flow Job retention and agent-history retention are separate policies.
 
 `SystemOneClient` is the low-level transport for trusted Python code with explicit connection parameters. It bypasses DocType lookup/authorization by design; use `evaluate` for normal Frappe app integration. Do not expose the low-level client with user-supplied URLs or credentials.
 

@@ -40,7 +40,7 @@ doc_events = {
 # the referenced doc. A knowledge chunk indexes a doc; a Flow Run records the doc a
 # trigger acted on. The incremental sweep removes orphaned chunks afterwards.
 # A session's Flow Model reference is historical bookkeeping and must not block deletion.
-ignore_links_on_delete = ["Flow Knowledge Chunk", "Flow Run", "Flow Session"]
+ignore_links_on_delete = ["Flow Knowledge Chunk", "Flow Run", "Flow Session", "Flow Job"]
 
 default_log_clearing_doctypes = {
 	"Flow Session": 90,
@@ -49,14 +49,17 @@ default_log_clearing_doctypes = {
 scheduler_events = {
 	"daily": [
 		"flow.knowledge.ingest.sync_due_sources",
+		"flow.jobs.cleanup",
 	],
 	"cron": {
+		"* * * * *": ["flow.jobs.dispatch"],
 		"*/5 * * * *": [
 			"flow.triggers.dispatch_scheduled",
 		],
 	},
 }
 
-after_migrate = ["flow.assistant.sync_builtin_assistant"]
+after_install = "flow.jobs.setup"
+after_migrate = ["flow.assistant.sync_builtin_assistant", "flow.jobs.setup"]
 
 extend_bootinfo = "flow.boot.boot_session"

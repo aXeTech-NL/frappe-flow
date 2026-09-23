@@ -1,0 +1,21 @@
+{
+ "doctype": "DocType",
+ "name": "Flow Settings",
+ "module": "Flow",
+ "issingle": 1,
+ "engine": "InnoDB",
+ "field_order": ["dispatch_enabled", "queue_name", "max_in_flight", "job_timeout", "decision_max_attempts", "retention_days", "failed_retention_days"],
+ "fields": [
+  {"fieldname": "dispatch_enabled", "fieldtype": "Check", "label": "Dispatch Background Jobs", "default": "1", "description": "Pause publishing new work without discarding pending jobs. Already queued/running work can finish."},
+  {"fieldname": "queue_name", "fieldtype": "Data", "label": "Worker Queue", "default": "flow", "reqd": 1, "description": "Register custom queues under workers in sites/common_site_config.json, then start listening workers. Existing worker entries must be preserved. Changing queues does not move already queued work."},
+  {"fieldname": "max_in_flight", "fieldtype": "Int", "label": "Maximum In-flight Jobs", "default": "4", "reqd": 1, "description": "Maximum queued plus running Flow Jobs per site (1–64). Not a provider requests/tokens-per-minute limit."},
+  {"fieldname": "job_timeout", "fieldtype": "Int", "label": "Worker Timeout (seconds)", "default": "900", "reqd": 1, "description": "RQ execution timeout (60–7200 seconds). Does not change a provider's connect/read timeout."},
+  {"fieldname": "decision_max_attempts", "fieldtype": "Int", "label": "Maximum Decision Attempts", "default": "3", "reqd": 1, "description": "1–10 attempts for transient decision-provider failures. Agents/triggers are never automatically retried."},
+  {"fieldname": "retention_days", "fieldtype": "Int", "label": "Keep Completed / Cancelled Jobs (days)", "default": "30", "description": "Measured from completion, not creation. Zero disables cleanup. Pending/active/paused jobs are never removed."},
+  {"fieldname": "failed_retention_days", "fieldtype": "Int", "label": "Keep Failed Jobs (days)", "default": "90", "description": "Measured from terminal failure. Zero disables cleanup. Flow Run retention is independent."}
+ ],
+ "permissions": [{"role": "System Manager", "read": 1, "write": 1, "create": 1}],
+ "track_changes": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

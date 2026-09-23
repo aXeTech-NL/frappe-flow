@@ -141,6 +141,11 @@ def create_run(
 			"status": "Running",
 		}
 	).insert(ignore_permissions=True)
+	# Attach before chat commits its Running run, so interrupted background agents remain traceable.
+	if frappe.flags.get("flow_background_job"):
+		from flow.jobs.jobs import attach_run
+
+		attach_run(doc.name)
 	return doc
 
 

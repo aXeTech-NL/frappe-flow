@@ -90,10 +90,28 @@ class FlowSession(Document):
 	@staticmethod
 	def clear_old_logs(days=30):
 		"""Delete sessions idle for `days`, along with their Flow Runs and transcript rows.
-		Age is last activity (modified), so an actively-used session is never purged."""
+		Age is last activity (modified). Unfinished background jobs keep their resumable history."""
 		cutoff = frappe.utils.add_days(frappe.utils.now(), -days)
 		sessions = frappe.get_all("Flow Session", filters={"modified": ["<", cutoff]}, pluck="name")
 		for batch in frappe.utils.create_batch(sessions, 100):
+			job, run = frappe.qb.DocType("Flow Job"), frappe.qb.DocType("Flow Run")
+			protected = {
+				row[0]
+				for row in (
+					frappe.qb.from_(run)
+					.join(job)
+					.on(job.flow_run == run.name)
+					.select(run.session)
+					.where(
+						run.session.isin(batch) & job.status.isin(["Pending", "Queued", "Running", "Paused"])
+					)
+					.distinct()
+					.run()
+				)
+			}
+			batch = [name for name in batch if name not in protected]
+			if not batch:
+				continue
 			frappe.db.delete("Flow Run", {"session": ["in", batch]})
 			frappe.db.delete("Flow Session Message", {"parent": ["in", batch]})
 			_delete_attachment_files(batch)
@@ -285,7 +303,7 @@ class FlowSession(Document):
 
 	def resume(self, answers: dict[str, Any], *, stream: bool = False) -> FlowRun | Generator[Event]:
 		"""Resume this session's paused run with the user's answers."""
-		from flow.flow.doctype.flow_run.flow_run import stream_with_persistence
+		from flow.jobs.jobs import resume_context
 
 		run_name = frappe.db.get_value(
 			"Flow Run",
@@ -296,6 +314,30 @@ class FlowSession(Document):
 		if not run_name:
 			frappe.throw(_("This session has no paused run to resume."), title=_("Nothing to Resume"))
 		run = frappe.get_doc("Flow Run", run_name)
+		if run.source != "Trigger":
+			return self._resume_run(run, answers, stream=stream)
+		if stream:
+			return self._resume_stream(run, answers)
+		with resume_context(run, self):
+			return self._resume_run(run, answers, stream=False)
+
+	def _resume_stream(self, run, answers):
+		from flow.jobs.jobs import resume_context
+
+		# The context must cover generator consumption, not merely its construction.
+		try:
+			with resume_context(run, self):
+				yield from self._resume_run(run, answers, stream=True)
+		except (frappe.PermissionError, frappe.ValidationError):
+			from flow.flow.doctype.flow_run.flow_run import Error
+
+			# Headers may already be sent. Keep the run paused and report denial as an SSE event.
+			yield Error(
+				message="Run could not be resumed. Check execution-user permissions and configuration."
+			)
+
+	def _resume_run(self, run, answers, *, stream):
+		from flow.flow.doctype.flow_run.flow_run import stream_with_persistence
 
 		self.reload()
 		messages = self._build_prompt_messages()

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from flow.decisions import evaluate, noul
+from flow.decisions import evaluate, noul, submit
 from flow.flow.doctype.flow_decision_provider.test_flow_decision_provider import provider_doc
 
 
@@ -70,6 +70,19 @@ class TestFlowDecision(IntegrationTestCase):
 			client.assert_called_once()
 			with self.assertRaises(frappe.PermissionError):
 				evaluate(provider=self.provider.name, state="test", questions={"q": noul("Yes?")})
+
+	def test_background_submit_persists_input_without_provider_call(self):
+		from flow.jobs import get_job
+
+		doc = self.make_decision().insert()
+		with patch("flow.decisions.service.SystemOneClient") as client, patch("frappe.enqueue") as enqueue:
+			name = submit(doc.name, state={"subject": "ticket"})
+		client.assert_not_called()
+		enqueue.assert_not_called()
+		self.assertEqual(get_job(name)["status"], "Pending")
+		payload = frappe.db.get_value("Flow Job", name, "payload")
+		self.assertEqual(json.loads(payload)["state"], {"subject": "ticket"})
+		self.assertNotIn("test-system-one-key", payload)
 
 	def test_guest_cannot_evaluate(self):
 		doc = self.make_decision().insert()

@@ -1,0 +1,89 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:provider_name",
+ "creation": "2026-09-23 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "provider_name",
+  "enabled",
+  "section_break_connection",
+  "endpoint_url",
+  "api_key",
+  "model_id",
+  "timeout"
+ ],
+ "fields": [
+  {
+   "description": "Your own connection name. Multiple providers can use the same endpoint with different credentials or models.",
+   "fieldname": "provider_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Provider Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "section_break_connection",
+   "fieldtype": "Section Break",
+   "label": "System One Connection"
+  },
+  {
+   "description": "Full evaluation endpoint, including the path (usually /v1/systemone). Any server implementing Choice, Score and Noul is supported. Use HTTPS for remote services. Local HTTP endpoints are allowed; configure only trusted servers.",
+   "fieldname": "endpoint_url",
+   "fieldtype": "Data",
+   "label": "Endpoint URL",
+   "reqd": 1
+  },
+  {
+   "description": "Optional bearer token, stored encrypted. Leave blank only when the server does not require authentication.",
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key"
+  },
+  {
+   "description": "Default model ID understood by this server. A Flow Decision may override it. Leave blank only if the server selects its own model.",
+   "fieldname": "model_id",
+   "fieldtype": "Data",
+   "label": "Model ID"
+  },
+  {
+   "default": "30",
+   "description": "Connect/read timeout in seconds (1–300). No automatic retries or provider fallback.",
+   "fieldname": "timeout",
+   "fieldtype": "Int",
+   "label": "Timeout (seconds)",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Flow",
+ "name": "Flow Decision Provider",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

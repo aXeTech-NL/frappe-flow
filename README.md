@@ -47,11 +47,25 @@ Flow also ships as a Python framework for building agents in code.
 | --- | --- |
 | `Flow Provider` | Provider-level credentials and endpoint settings |
 | `Flow Model` | Model configuration — set a `model_id` like `anthropic/claude-sonnet-4-6` |
+| `Flow Decision Provider` / `Flow Decision` | Provider-independent System One connections and reusable typed decisions |
 | `Flow Tool` | Reusable tools, defined as a module path or inline script |
 | `Flow Agent` | Instructions, model, and tools — configurable from the Desk or in code |
 | `Flow Trigger` | Run an agent on a DocType event or a schedule |
 | `Flow Knowledge Base` / `Flow Knowledge Source` | Knowledge sources (files, URLs, DocTypes) for retrieval-augmented answers |
 | `Flow Session` / `Flow Run` | Persisted conversations and execution history |
+
+### System One decisions
+
+Other Frappe apps can reuse Flow's **Choice**, **Score**, and **Noul** decision layer without running a chat agent. Configure your own System One-compatible provider (hosted or self-hosted), save a `Flow Decision`, then call it from Python:
+
+```python
+from flow.decisions import evaluate
+
+result = evaluate("ticket_triage", state={"subject": "I was charged twice"})
+team = result["answers"]["team"]["choice"]
+```
+
+Your app owns the questions, thresholds, permissions and actions. Flow handles the connection and validates structured answers. See [System One setup and app integration](docs/system-one.md).
 
 ### Define a tool
 
